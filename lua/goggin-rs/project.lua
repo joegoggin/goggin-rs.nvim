@@ -1,9 +1,16 @@
+--- Project layout discovery for Rust/Leptos applications.
+---
+--- Resolves configured source and style paths from the current Neovim buffer,
+--- working directory, or expanded file path. Supports both repository-root and
+--- nested `web` layouts.
+
 local config = require("goggin-rs.config")
 local fs = require("goggin-rs.fs")
 local path = require("goggin-rs.path")
 
 local M = {}
 
+---@type table<string, string>
 local PATH_LABELS = {
     components_dir = "src/components",
     styles_components_dir = "styles/components",
@@ -12,6 +19,7 @@ local PATH_LABELS = {
     app_path = "src/app.rs",
 }
 
+---@type table<string, "directory"|"file">
 local PATH_TYPES = {
     components_dir = "directory",
     styles_components_dir = "directory",
@@ -20,6 +28,12 @@ local PATH_TYPES = {
     app_path = "file",
 }
 
+--- Appends a directory and its ancestors to an ordered search-root list.
+---
+---@param start_dir string|nil Directory where ancestor collection starts.
+---@param roots string[] Ordered search-root accumulator.
+---@param seen table<string, boolean> Set of already-added normalized roots.
+---
 local function append_ancestors(start_dir, roots, seen)
     local current = path.normalize_dir(start_dir)
 
@@ -36,6 +50,10 @@ local function append_ancestors(start_dir, roots, seen)
     end
 end
 
+--- Collects candidate project roots from the current Neovim context.
+---
+---@return string[] roots Ordered, de-duplicated candidate root directories.
+---
 local function collect_search_roots()
     local roots = {}
     local seen = {}
@@ -55,6 +73,12 @@ local function collect_search_roots()
     return roots
 end
 
+--- Resolves a configured path relative to a candidate web root.
+---
+---@param web_root string Candidate web root.
+---@param configured_path string Configured absolute or relative path.
+---@return string resolved Absolute path without trailing slashes.
+---
 local function resolve_configured_path(web_root, configured_path)
     if path.is_absolute(configured_path) then
         return configured_path:gsub("/+$", "")
@@ -63,6 +87,11 @@ local function resolve_configured_path(web_root, configured_path)
     return path.join(web_root, configured_path):gsub("/+$", "")
 end
 
+--- Builds concrete project paths for a candidate web root.
+---
+---@param web_root string Candidate web root.
+---@return table paths Resolved project path table.
+---
 local function build_paths(web_root)
     local configured_paths = config.get().paths or {}
 
@@ -76,6 +105,11 @@ local function build_paths(web_root)
     }
 end
 
+--- Builds supported layout candidates for a root.
+---
+---@param root string Candidate root directory.
+---@return table[] layouts Candidate path tables for nested and direct layouts.
+---
 local function build_layouts(root)
     return {
         build_paths(path.join(root, "web")),
@@ -83,6 +117,12 @@ local function build_layouts(root)
     }
 end
 
+--- Checks whether a resolved path satisfies a required key.
+---
+---@param paths table Resolved project path table.
+---@param key string Required path key.
+---@return boolean satisfies Whether the path exists with the expected type.
+---
 local function path_satisfies(paths, key)
     local value = paths[key]
     if not value then
@@ -96,6 +136,12 @@ local function path_satisfies(paths, key)
     return fs.is_directory(value)
 end
 
+--- Checks whether every required path exists in a candidate layout.
+---
+---@param paths table Resolved project path table.
+---@param required string[] Required path keys.
+---@return boolean has_paths Whether all required paths are satisfied.
+---
 local function has_required_paths(paths, required)
     for _, key in ipairs(required) do
         if not path_satisfies(paths, key) then
@@ -106,6 +152,11 @@ local function has_required_paths(paths, required)
     return true
 end
 
+--- Builds a user-facing description of required path keys.
+---
+---@param required string[] Required path keys.
+---@return string description Sorted, de-duplicated path labels.
+---
 local function describe_required(required)
     local labels = {}
     local seen = {}
@@ -122,6 +173,15 @@ local function describe_required(required)
     return table.concat(labels, ", ")
 end
 
+--- Resolves project paths from the current Neovim context.
+---
+--- Searches candidate roots for either a nested `web` layout or a direct web
+--- root layout. Returns a warning string when required paths cannot be found.
+---
+---@param required string[]|nil Path keys that must exist for a layout to match.
+---@return table|nil paths Resolved project paths when a layout is found.
+---@return string|nil err User-facing warning when required paths cannot be located.
+---
 function M.resolve(required)
     local required_paths = required or {}
 
