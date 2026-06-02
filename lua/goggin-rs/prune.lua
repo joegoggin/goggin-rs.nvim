@@ -9,6 +9,20 @@ local touch = require("goggin-rs.touch")
 
 local M = {}
 
+--- Checks whether a normalized path is inside a normalized root.
+---
+---@param current string Normalized path to inspect.
+---@param root string Normalized boundary root.
+---@return boolean descendant Whether current is below root.
+---
+local function is_descendant(current, root)
+    if root == "/" then
+        return current ~= "/"
+    end
+
+    return current:sub(1, #root + 1) == root .. "/"
+end
+
 --- Checks whether directory entries include anything beyond a marker file.
 ---
 ---@param entries string[] Directory entry names.
@@ -46,7 +60,7 @@ function M.empty_dirs(start_dir, root_dir, opts)
     local root = path.normalize_dir(root_dir)
     local current = path.normalize_dir(start_dir)
 
-    while current and root and current ~= root do
+    while current and root and current ~= root and is_descendant(current, root) do
         if not fs.is_directory(current) then
             current = path.normalize_dir(vim.fn.fnamemodify(current, ":h"))
         else

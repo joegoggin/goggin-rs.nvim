@@ -21,7 +21,7 @@ end
 --- Checks whether a filesystem path is a directory.
 ---
 ---@param path string|nil Path to inspect.
----@return boolean|nil is_directory Whether the path exists and is a directory.
+---@return boolean is_directory Whether the path exists and is a directory.
 ---
 function M.is_directory(path)
     if not path or path == "" then
@@ -29,7 +29,7 @@ function M.is_directory(path)
     end
 
     local stat = vim.uv.fs_stat(path)
-    return stat and stat.type == "directory"
+    return stat ~= nil and stat.type == "directory"
 end
 
 --- Reads all lines from an existing file.

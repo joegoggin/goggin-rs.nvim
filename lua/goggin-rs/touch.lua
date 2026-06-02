@@ -86,8 +86,9 @@ end
 --- Formats an existing file through Neovim LSP and writes modifications.
 ---
 --- Loads the file into a buffer when needed, runs synchronous formatting when a
---- formatting-capable LSP client is attached, writes modified buffers, and
---- deletes temporary hidden buffers opened only for formatting.
+--- formatting-capable LSP client is attached, writes formatter changes, and
+--- deletes temporary hidden buffers opened only for formatting. Skips buffers
+--- that already have unsaved changes to avoid writing unrelated edits.
 ---
 ---@param file_path string Path to the file to format.
 ---@param opts table|nil Formatting options.
@@ -107,6 +108,11 @@ function M.format_file(file_path, opts)
     end
 
     if not vim.api.nvim_buf_is_valid(bufnr) then
+        return false
+    end
+
+    if was_loaded and vim.bo[bufnr].modified then
+        vim.notify("Skipping formatting for modified buffer " .. file_path, vim.log.levels.WARN)
         return false
     end
 

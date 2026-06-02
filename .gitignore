@@ -1,6 +1,4 @@
 issues
 .DS_Store
-.luarc.json
 /.luarocks/
 /doc/tags
-

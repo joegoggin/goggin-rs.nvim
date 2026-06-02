@@ -331,9 +331,10 @@ test("resolves repo-root layout", function()
     })
 
     assert_equals(err, nil, "repo-root layout should not return an error")
-    assert_equals(paths.web_root, root, "repo-root web root should be the current root")
-    assert_equals(paths.components_dir, path.join(root, "src", "components"), "components path should resolve")
-    assert_equals(paths.app_path, path.join(root, "src", "app.rs"), "app path should resolve")
+    local resolved_paths = assert(paths)
+    assert_equals(resolved_paths.web_root, root, "repo-root web root should be the current root")
+    assert_equals(resolved_paths.components_dir, path.join(root, "src", "components"), "components path should resolve")
+    assert_equals(resolved_paths.app_path, path.join(root, "src", "app.rs"), "app path should resolve")
 end)
 
 --- Verifies project resolution for a nested `web` layout.
@@ -358,9 +359,10 @@ test("resolves nested web layout", function()
     local paths, err = project.resolve({ "components_dir", "app_path" })
 
     assert_equals(err, nil, "nested web layout should not return an error")
-    assert_equals(paths.web_root, web_root, "nested web root should resolve")
+    local resolved_paths = assert(paths)
+    assert_equals(resolved_paths.web_root, web_root, "nested web root should resolve")
     assert_equals(
-        paths.components_dir,
+        resolved_paths.components_dir,
         path.join(web_root, "src", "components"),
         "nested components path should resolve"
     )
@@ -423,9 +425,14 @@ test("merges configured path overrides", function()
     local paths, err = project.resolve({ "components_dir", "app_path" })
 
     assert_equals(err, nil, "configured layout should not return an error")
-    assert_equals(paths.components_dir, path.join(root, "ui", "components"), "components override should resolve")
-    assert_equals(paths.app_path, path.join(root, "app", "main.rs"), "app override should resolve")
-    assert_equals(paths.pages_dir, path.join(root, "src", "pages"), "defaults should remain merged")
+    local resolved_paths = assert(paths)
+    assert_equals(
+        resolved_paths.components_dir,
+        path.join(root, "ui", "components"),
+        "components override should resolve"
+    )
+    assert_equals(resolved_paths.app_path, path.join(root, "app", "main.rs"), "app override should resolve")
+    assert_equals(resolved_paths.pages_dir, path.join(root, "src", "pages"), "defaults should remain merged")
 end)
 
 --- Verifies project resolution diagnostics for missing required paths.
@@ -922,6 +929,31 @@ test("rust and scss helpers prune empty directories", function()
     }, "style prune should track deleted child and updated parent")
 end)
 
+--- Verifies pruning does not delete directories outside the root boundary.
+---
+--- # Example Under Test
+---
+--- An empty generated directory outside the configured root is passed to the
+--- pruning helper with a different root boundary.
+---
+--- # Assertions
+---
+--- - The outside directory remains untouched.
+---
+test("prune ignores directories outside root boundary", function()
+    local root = path.join(temp_root, "prune-boundary")
+    local actual_root = path.join(root, "src", "pages")
+    local outside = path.join(root, "other", "admin")
+
+    write_file(path.join(outside, "mod.rs"), {})
+    mkdir(actual_root)
+
+    rust.prune_empty_dirs(outside, actual_root)
+
+    assert_equals(fs.exists(outside), true, "outside directory should not be pruned")
+    assert_equals(fs.exists(path.join(outside, "mod.rs")), true, "outside marker should remain")
+end)
+
 --- Verifies touched-file tracking and formatting dispatch.
 ---
 --- # Example Under Test
@@ -954,19 +986,45 @@ test("touch helpers dedupe paths and dispatch format targets", function()
 
     local original_format_file = touch.format_file
     local formatted = {}
-    touch.format_file = function(file_path, opts)
+    rawset(touch, "format_file", function(file_path, opts)
         table.insert(formatted, file_path .. ":" .. tostring(opts.timeout_ms))
         return true
-    end
+    end)
 
     local count = touch.format_touched(tracker, { timeout_ms = 25 })
-    touch.format_file = original_format_file
+    rawset(touch, "format_file", original_format_file)
 
     assert_equals(count, 2, "only rust and scss files should be formatted")
     assert_list_equals(formatted, {
         rust_path .. ":25",
         scss_path .. ":25",
     }, "format dispatch should preserve touched-file order")
+end)
+
+--- Verifies file formatting does not write already-modified buffers.
+---
+--- # Example Under Test
+---
+--- A file is loaded into a buffer, changed without writing, then passed to
+--- `format_file` in a session without an attached formatter.
+---
+--- # Assertions
+---
+--- - Formatting returns false.
+--- - The unsaved buffer contents are not written to disk.
+---
+test("touch format_file skips modified loaded buffers", function()
+    local file_path = path.join(temp_root, "touch", "loaded.rs")
+    write_file(file_path, { "disk" })
+
+    local bufnr = vim.fn.bufadd(file_path)
+    vim.fn.bufload(bufnr)
+    vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { "unsaved" })
+
+    assert_equals(touch.format_file(file_path), false, "modified loaded buffer should not format")
+    assert_list_equals(fs.read_lines(file_path), { "disk" }, "format_file should not write unsaved edits")
+
+    vim.api.nvim_buf_delete(bufnr, { force = true })
 end)
 
 vim.fn.chdir(original_cwd)
