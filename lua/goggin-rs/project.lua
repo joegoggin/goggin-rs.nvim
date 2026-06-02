@@ -1,4 +1,6 @@
 local config = require("goggin-rs.config")
+local fs = require("goggin-rs.fs")
+local path = require("goggin-rs.path")
 
 local M = {}
 
@@ -18,57 +20,14 @@ local PATH_TYPES = {
     app_path = "file",
 }
 
-local function path_join(...)
-    local parts = {}
-
-    for _, part in ipairs({ ... }) do
-        if part and part ~= "" then
-            table.insert(parts, part)
-        end
-    end
-
-    return table.concat(parts, "/")
-end
-
-local function is_absolute(path)
-    return path:sub(1, 1) == "/" or path:match("^%a:[/\\]") ~= nil
-end
-
-local function normalize_dir(path)
-    if not path or path == "" then
-        return nil
-    end
-
-    local normalized = vim.fn.fnamemodify(path, ":p")
-    if normalized == "" then
-        return nil
-    end
-
-    normalized = normalized:gsub("/+$", "")
-    if normalized == "" then
-        return "/"
-    end
-
-    return normalized
-end
-
-local function is_directory(path)
-    local stat = vim.uv.fs_stat(path)
-    return stat and stat.type == "directory"
-end
-
-local function file_exists(path)
-    return vim.uv.fs_stat(path) ~= nil
-end
-
 local function append_ancestors(start_dir, roots, seen)
-    local current = normalize_dir(start_dir)
+    local current = path.normalize_dir(start_dir)
 
     while current and not seen[current] do
         seen[current] = true
         table.insert(roots, current)
 
-        local parent = normalize_dir(vim.fn.fnamemodify(current, ":h"))
+        local parent = path.normalize_dir(vim.fn.fnamemodify(current, ":h"))
         if not parent or parent == current then
             break
         end
@@ -96,12 +55,12 @@ local function collect_search_roots()
     return roots
 end
 
-local function resolve_configured_path(web_root, path)
-    if is_absolute(path) then
-        return path:gsub("/+$", "")
+local function resolve_configured_path(web_root, configured_path)
+    if path.is_absolute(configured_path) then
+        return configured_path:gsub("/+$", "")
     end
 
-    return path_join(web_root, path):gsub("/+$", "")
+    return path.join(web_root, configured_path):gsub("/+$", "")
 end
 
 local function build_paths(web_root)
@@ -119,7 +78,7 @@ end
 
 local function build_layouts(root)
     return {
-        build_paths(path_join(root, "web")),
+        build_paths(path.join(root, "web")),
         build_paths(root),
     }
 end
@@ -131,10 +90,10 @@ local function path_satisfies(paths, key)
     end
 
     if PATH_TYPES[key] == "file" then
-        return file_exists(value)
+        return fs.exists(value)
     end
 
-    return is_directory(value)
+    return fs.is_directory(value)
 end
 
 local function has_required_paths(paths, required)
