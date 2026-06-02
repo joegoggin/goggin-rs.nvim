@@ -10,22 +10,13 @@ local path = require("goggin-rs.path")
 
 local M = {}
 
----@type table<string, string>
-local PATH_LABELS = {
-    components_dir = "src/components",
-    styles_components_dir = "styles/components",
-    pages_dir = "src/pages",
-    page_styles_dir = "styles/pages",
-    app_path = "src/app.rs",
-}
-
----@type table<string, "directory"|"file">
-local PATH_TYPES = {
-    components_dir = "directory",
-    styles_components_dir = "directory",
-    pages_dir = "directory",
-    page_styles_dir = "directory",
-    app_path = "file",
+---@type table<string, { label: string, type: "directory"|"file" }>
+local PROJECT_PATHS = {
+    components_dir = { label = "src/components", type = "directory" },
+    styles_components_dir = { label = "styles/components", type = "directory" },
+    pages_dir = { label = "src/pages", type = "directory" },
+    page_styles_dir = { label = "styles/pages", type = "directory" },
+    app_path = { label = "src/app.rs", type = "file" },
 }
 
 --- Appends a directory and its ancestors to an ordered search-root list.
@@ -94,15 +85,15 @@ end
 ---
 local function build_paths(web_root)
     local configured_paths = config.get().paths or {}
-
-    return {
+    local paths = {
         web_root = web_root,
-        components_dir = resolve_configured_path(web_root, configured_paths.components_dir),
-        styles_components_dir = resolve_configured_path(web_root, configured_paths.styles_components_dir),
-        pages_dir = resolve_configured_path(web_root, configured_paths.pages_dir),
-        page_styles_dir = resolve_configured_path(web_root, configured_paths.page_styles_dir),
-        app_path = resolve_configured_path(web_root, configured_paths.app_path),
     }
+
+    for key in pairs(PROJECT_PATHS) do
+        paths[key] = resolve_configured_path(web_root, configured_paths[key])
+    end
+
+    return paths
 end
 
 --- Builds supported layout candidates for a root.
@@ -129,7 +120,7 @@ local function path_satisfies(paths, key)
         return false
     end
 
-    if PATH_TYPES[key] == "file" then
+    if PROJECT_PATHS[key] and PROJECT_PATHS[key].type == "file" then
         return fs.exists(value)
     end
 
@@ -162,7 +153,8 @@ local function describe_required(required)
     local seen = {}
 
     for _, key in ipairs(required) do
-        local label = PATH_LABELS[key] or key
+        local path_config = PROJECT_PATHS[key]
+        local label = path_config and path_config.label or key
         if not seen[label] then
             seen[label] = true
             table.insert(labels, label)

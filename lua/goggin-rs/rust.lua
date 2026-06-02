@@ -4,6 +4,7 @@
 --- and empty module directories for Rust/Leptos project workflows.
 
 local fs = require("goggin-rs.fs")
+local line_utils = require("goggin-rs.lines")
 local naming = require("goggin-rs.naming")
 local path = require("goggin-rs.path")
 local prune = require("goggin-rs.prune")
@@ -21,56 +22,43 @@ local function starts_with(value, prefix)
     return value:sub(1, #prefix) == prefix
 end
 
---- Checks whether a line list contains an exact line.
+--- Checks whether a trimmed line is a Rust module declaration.
 ---
----@param lines string[] Lines to inspect.
----@param expected string Exact line to find.
----@return boolean found Whether the line exists.
+---@param trimmed string Trimmed source line.
+---@return boolean is_declaration Whether the line declares a module.
 ---
-local function has_line(lines, expected)
-    for _, line in ipairs(lines) do
-        if line == expected then
-            return true
-        end
-    end
-
-    return false
+local function is_mod_declaration(trimmed)
+    return trimmed:match("^pub%s+mod%s+") ~= nil or trimmed:match("^mod%s+") ~= nil
 end
 
---- Checks whether a line list contains a line after trimming whitespace.
+--- Checks whether a trimmed line declares a specific Rust module.
 ---
----@param lines string[] Lines to inspect.
----@param expected string Trimmed line text to find.
----@return boolean found Whether a trimmed line matches.
+---@param trimmed string Trimmed source line.
+---@param module_name string Module name to match.
+---@return boolean is_declaration Whether the line declares the module.
 ---
-local function has_trimmed_line(lines, expected)
-    for _, line in ipairs(lines) do
-        if naming.trim(line) == expected then
-            return true
-        end
-    end
-
-    return false
+local function is_module_declaration_for(trimmed, module_name)
+    local module_pattern = vim.pesc(module_name)
+    return trimmed:match("^pub%s+mod%s+" .. module_pattern .. "%s*;$") ~= nil
+        or trimmed:match("^mod%s+" .. module_pattern .. "%s*;$") ~= nil
 end
 
---- Compares two line lists for identical ordered contents.
+--- Checks whether a trimmed line is a Rust public-use declaration.
 ---
----@param left string[] First line list.
----@param right string[] Second line list.
----@return boolean same Whether both lists contain the same lines.
+---@param trimmed string Trimmed source line.
+---@return boolean is_declaration Whether the line is a public-use declaration.
 ---
-local function same_lines(left, right)
-    if #left ~= #right then
-        return false
-    end
+local function is_pub_use_declaration(trimmed)
+    return trimmed:match("^pub%s+use%s+") ~= nil
+end
 
-    for index, value in ipairs(left) do
-        if right[index] ~= value then
-            return false
-        end
-    end
-
-    return true
+--- Extracts the expression from a trimmed Rust public-use declaration.
+---
+---@param trimmed string Trimmed source line.
+---@return string|nil expression Expression after `pub use`, excluding the semicolon.
+---
+local function pub_use_expression(trimmed)
+    return trimmed:match("^pub%s+use%s+(.+);$")
 end
 
 --- Normalizes a Rust `mod.rs` file layout.
@@ -89,9 +77,9 @@ function M.normalize_mod_layout(mod_path)
 
     for _, line in ipairs(lines) do
         local trimmed = naming.trim(line)
-        if trimmed:match("^pub%s+mod%s+") or trimmed:match("^mod%s+") then
+        if is_mod_declaration(trimmed) then
             table.insert(mod_lines, trimmed)
-        elseif trimmed:match("^pub%s+use%s+") then
+        elseif is_pub_use_declaration(trimmed) then
             table.insert(use_lines, trimmed)
         elseif trimmed:match("^%s*$") then
             -- Blank lines are rebuilt below.
@@ -123,7 +111,7 @@ function M.normalize_mod_layout(mod_path)
         end
     end
 
-    if same_lines(lines, normalized) then
+    if line_utils.equals(lines, normalized) then
         return false
     end
 
@@ -149,7 +137,7 @@ function M.ensure_mod_declaration(mod_path, module_name, opts)
     local opposite = (private and "pub mod " or "mod ") .. module_name .. ";"
     local lines = fs.read_lines(mod_path)
 
-    if has_trimmed_line(lines, declaration) or has_trimmed_line(lines, opposite) then
+    if line_utils.has_trimmed(lines, declaration) or line_utils.has_trimmed(lines, opposite) then
         return false
     end
 
@@ -157,11 +145,11 @@ function M.ensure_mod_declaration(mod_path, module_name, opts)
     local first_use_index = nil
     for index, line in ipairs(lines) do
         local trimmed = naming.trim(line)
-        if trimmed:match("^pub%s+mod%s+") or trimmed:match("^mod%s+") then
+        if is_mod_declaration(trimmed) then
             last_mod_index = index
         end
 
-        if trimmed:match("^pub%s+use%s+") then
+        if is_pub_use_declaration(trimmed) then
             first_use_index = index
             break
         end
@@ -190,13 +178,13 @@ function M.ensure_use_declaration(mod_path, use_expression)
 
     local lines = fs.read_lines(mod_path)
     local declaration = "pub use " .. use_expression .. ";"
-    if has_trimmed_line(lines, declaration) then
+    if line_utils.has_trimmed(lines, declaration) then
         return false
     end
 
     local last_use_index = nil
     for index, line in ipairs(lines) do
-        if naming.trim(line):match("^pub%s+use%s+") then
+        if is_pub_use_declaration(naming.trim(line)) then
             last_use_index = index
         end
     end
@@ -222,20 +210,16 @@ function M.remove_module_reference(mod_path, module_name)
         return false
     end
 
-    local module_pattern = vim.pesc(module_name)
     local lines = fs.read_lines(mod_path)
     local updated = {}
     local changed = false
 
     for _, line in ipairs(lines) do
         local trimmed = naming.trim(line)
-        local is_mod_declaration = trimmed:match("^pub%s+mod%s+" .. module_pattern .. "%s*;$")
-            or trimmed:match("^mod%s+" .. module_pattern .. "%s*;$")
-
-        if is_mod_declaration then
+        if is_module_declaration_for(trimmed, module_name) then
             changed = true
         else
-            local expression = trimmed:match("^pub%s+use%s+(.+);$")
+            local expression = pub_use_expression(trimmed)
             if expression then
                 expression = naming.trim(expression)
                 if expression == module_name or starts_with(expression, module_name .. "::") then
@@ -326,7 +310,7 @@ function M.remove_use_symbol(mod_path, symbol)
 
     for _, line in ipairs(lines) do
         local trimmed = naming.trim(line)
-        local expression = trimmed:match("^pub%s+use%s+(.+);$")
+        local expression = pub_use_expression(trimmed)
         if expression then
             local next_expression, did_change = remove_symbol_from_use_expression(naming.trim(expression), symbol)
             if did_change then
@@ -536,7 +520,7 @@ local function normalize_routes_blank_lines(lines)
         table.insert(updated, lines[index])
     end
 
-    return updated, not same_lines(lines, updated)
+    return updated, not line_utils.equals(lines, updated)
 end
 
 --- Converts a route segment into a title-cased group label.
@@ -582,7 +566,7 @@ function M.insert_route(app_path, route_path, view_name, opts)
     end
 
     local route_line = string.format('%s<%s path=path!("%s") view=%s />', indent, route_tag, macro_path, view_name)
-    if has_line(lines, route_line) then
+    if line_utils.has(lines, route_line) then
         return false
     end
 

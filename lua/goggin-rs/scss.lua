@@ -4,26 +4,20 @@
 --- pruning `@forward` declarations for components and pages.
 
 local fs = require("goggin-rs.fs")
+local line_utils = require("goggin-rs.lines")
 local path = require("goggin-rs.path")
 local prune = require("goggin-rs.prune")
 local touch = require("goggin-rs.touch")
 
 local M = {}
 
---- Checks whether a line list contains an exact line.
+--- Extracts the target from an SCSS forward declaration line.
 ---
----@param lines string[] Lines to inspect.
----@param expected string Exact line to find.
----@return boolean found Whether the line exists.
+---@param line string SCSS source line.
+---@return string|nil target Forward target when the line is a declaration.
 ---
-local function has_line(lines, expected)
-    for _, line in ipairs(lines) do
-        if line == expected then
-            return true
-        end
-    end
-
-    return false
+local function forward_target(line)
+    return line:match('^%s*@forward%s+"([^"]+)"%s*;%s*$')
 end
 
 --- Checks whether an SCSS index forwards a target.
@@ -34,8 +28,7 @@ end
 ---
 local function has_forward(lines, target)
     for _, line in ipairs(lines) do
-        local forward_target = line:match('^%s*@forward%s+"([^"]+)"%s*;%s*$')
-        if forward_target == target then
+        if forward_target(line) == target then
             return true
         end
     end
@@ -91,7 +84,7 @@ function M.replace_forward(index_path, old_target, new_target, tracker)
     local old_line = forward_line(old_target)
     local new_line = forward_line(new_target)
     local lines = fs.read_lines(index_path)
-    local has_new = has_line(lines, new_line)
+    local has_new = line_utils.has(lines, new_line)
     local updated = {}
     local changed = false
 
@@ -137,8 +130,7 @@ function M.remove_forward(index_path, target, tracker)
     local changed = false
 
     for _, line in ipairs(lines) do
-        local forward_target = line:match('^%s*@forward%s+"([^"]+)"%s*;%s*$')
-        if forward_target == target then
+        if forward_target(line) == target then
             changed = true
         else
             table.insert(updated, line)

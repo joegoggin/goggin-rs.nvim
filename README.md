@@ -46,6 +46,8 @@ Project resolution checks both supported layouts:
   Neovim context.
 - `goggin-rs.naming` converts user input into Rust, file, style, and route
   naming conventions.
+- `goggin-rs.lines` provides shared line-list predicates for source mutation
+  helpers.
 - `goggin-rs.rust` updates Rust module declarations, exports, Leptos routes,
   and empty module directories.
 - `goggin-rs.scss` updates SCSS `@forward` indexes and style directory chains.
