@@ -530,6 +530,49 @@ test("rust helpers update module declarations and exports", function()
     }, "module declarations and exports should be grouped")
 end)
 
+--- Verifies Rust layout normalization does not detach attributes or split
+--- inline module blocks.
+---
+--- # Example Under Test
+---
+--- A `mod.rs` fixture contains a normal public module, an attribute-bound
+--- module declaration, an inline test module, and a public export.
+---
+--- # Assertions
+---
+--- - Plain module declarations and public exports are grouped.
+--- - Attribute-bound declarations remain attached to their attributes.
+--- - Inline module blocks stay in their original content order.
+---
+test("rust layout normalization preserves attributed and inline modules", function()
+    local root = path.join(temp_root, "rust-mod-attributes")
+    local mod_path = path.join(root, "src", "pages", "mod.rs")
+    write_file(mod_path, {
+        "pub mod existing;",
+        '#[cfg(feature = "admin")]',
+        "pub mod admin;",
+        "#[cfg(test)]",
+        "mod tests {",
+        "    fn smoke() {}",
+        "}",
+        "pub use existing::ExistingPage;",
+    })
+
+    assert_equals(rust.normalize_mod_layout(mod_path), true, "module layout should normalize")
+    assert_list_equals(fs.read_lines(mod_path), {
+        "pub mod existing;",
+        "",
+        "pub use existing::ExistingPage;",
+        "",
+        '#[cfg(feature = "admin")]',
+        "pub mod admin;",
+        "#[cfg(test)]",
+        "mod tests {",
+        "    fn smoke() {}",
+        "}",
+    }, "attributed and inline modules should stay attached")
+end)
+
 --- Verifies Rust module and public-use cleanup.
 ---
 --- # Example Under Test
@@ -574,6 +617,58 @@ test("rust helpers remove modules and use symbols", function()
         "",
         "pub use users::UserCard;",
     }, "module removal should normalize remaining layout")
+end)
+
+--- Verifies Rust removal helpers do not orphan attributes from deleted items.
+---
+--- # Example Under Test
+---
+--- `mod.rs` fixtures contain attributes attached to module declarations and
+--- public-use declarations that are removed by deletion helpers.
+---
+--- # Assertions
+---
+--- - Attributes attached to deleted module declarations are removed.
+--- - Attributes attached to deleted public-use declarations are removed.
+--- - Attributes attached to surviving public-use declarations remain attached.
+---
+test("rust removal helpers drop attributes attached to removed declarations", function()
+    local root = path.join(temp_root, "rust-remove-attributes")
+    local mod_path = path.join(root, "src", "pages", "mod.rs")
+    write_file(mod_path, {
+        '#[cfg(feature = "admin")]',
+        "pub mod admin;",
+        "pub mod users;",
+        "",
+        '#[cfg(feature = "admin")]',
+        "pub use admin::AdminPage;",
+        "pub use users::UserCard;",
+        '#[cfg(feature = "reports")]',
+        "pub use reports::ReportsPage;",
+    })
+
+    assert_equals(rust.remove_module_reference(mod_path, "admin"), true, "module reference should be removed")
+    assert_list_equals(fs.read_lines(mod_path), {
+        "pub mod users;",
+        "",
+        "pub use users::UserCard;",
+        "",
+        '#[cfg(feature = "reports")]',
+        "pub use reports::ReportsPage;",
+    }, "module removal should remove attributes attached to deleted declarations")
+
+    local use_path = path.join(root, "src", "components", "mod.rs")
+    write_file(use_path, {
+        '#[cfg(feature = "admin")]',
+        "",
+        "pub use admin::AdminPage;",
+        "pub use users::UserCard;",
+    })
+
+    assert_equals(rust.remove_use_symbol(use_path, "AdminPage"), true, "attributed use symbol should be removed")
+    assert_list_equals(fs.read_lines(use_path), {
+        "pub use users::UserCard;",
+    }, "use removal should not leave deleted symbol attributes behind")
 end)
 
 --- Verifies Leptos route insertion and removal.
@@ -657,6 +752,48 @@ test("rust helpers insert and remove app routes", function()
     }, "orphan route group comments should be cleaned up")
 end)
 
+--- Verifies route removal does not consume non-self-closing parent routes.
+---
+--- # Example Under Test
+---
+--- A `<Routes>` fixture contains a parent route with a nested self-closing
+--- child route.
+---
+--- # Assertions
+---
+--- - Removing the child route leaves the parent route tags balanced.
+--- - The route group comment remains because the parent route still exists.
+---
+test("rust route removal preserves non-self-closing parent routes", function()
+    local root = path.join(temp_root, "rust-nested-routes")
+    local app_path = path.join(root, "src", "app.rs")
+    write_file(app_path, {
+        "view! {",
+        "    <Router>",
+        "        <Routes>",
+        "                    // Admin",
+        '                    <Route path=path!("/admin") view=AdminLayout>',
+        '                        <Route path=path!("users") view=AdminUsersPage />',
+        "                    </Route>",
+        "        </Routes>",
+        "    </Router>",
+        "}",
+    })
+
+    assert_equals(rust.remove_route_view(app_path, "AdminUsersPage"), true, "nested child route should be removed")
+    assert_list_equals(fs.read_lines(app_path), {
+        "view! {",
+        "    <Router>",
+        "        <Routes>",
+        "                    // Admin",
+        '                    <Route path=path!("/admin") view=AdminLayout>',
+        "                    </Route>",
+        "        </Routes>",
+        "    </Router>",
+        "}",
+    }, "parent route tags should remain balanced")
+end)
+
 --- Verifies SCSS forward mutations and nested forward chains.
 ---
 --- # Example Under Test
@@ -694,6 +831,22 @@ test("scss helpers update forwards and forward chains", function()
         '@forward "base";',
         '@forward "layout";',
     }, "forward mutations should produce expected index")
+
+    local spaced_index_path = path.join(root, "styles", "components", "spaced.scss")
+    write_file(spaced_index_path, {
+        '  @forward   "existing"  ;',
+        '@forward   "base"  ;',
+    })
+
+    assert_equals(
+        scss.replace_forward(spaced_index_path, "existing", "base"),
+        true,
+        "replace_forward should parse whitespace-tolerant forwards"
+    )
+    assert_list_equals(fs.read_lines(spaced_index_path), {
+        '@forward   "base"  ;',
+    }, "replace_forward should not duplicate an existing target with spacing")
+
     assert_list_equals(tracker:paths(), {
         index_path,
     }, "tracker should record changed index once")

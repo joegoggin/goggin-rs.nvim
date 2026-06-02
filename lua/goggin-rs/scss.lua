@@ -4,7 +4,6 @@
 --- pruning `@forward` declarations for components and pages.
 
 local fs = require("goggin-rs.fs")
-local line_utils = require("goggin-rs.lines")
 local path = require("goggin-rs.path")
 local prune = require("goggin-rs.prune")
 local touch = require("goggin-rs.touch")
@@ -81,15 +80,14 @@ end
 function M.replace_forward(index_path, old_target, new_target, tracker)
     fs.ensure_file(index_path)
 
-    local old_line = forward_line(old_target)
     local new_line = forward_line(new_target)
     local lines = fs.read_lines(index_path)
-    local has_new = line_utils.has(lines, new_line)
+    local has_new = has_forward(lines, new_target)
     local updated = {}
     local changed = false
 
     for _, line in ipairs(lines) do
-        if old_target ~= new_target and line == old_line then
+        if old_target ~= new_target and forward_target(line) == old_target then
             if not has_new then
                 table.insert(updated, new_line)
                 has_new = true

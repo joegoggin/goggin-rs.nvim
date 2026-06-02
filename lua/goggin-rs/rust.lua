@@ -28,7 +28,7 @@ end
 ---@return boolean is_declaration Whether the line declares a module.
 ---
 local function is_mod_declaration(trimmed)
-    return trimmed:match("^pub%s+mod%s+") ~= nil or trimmed:match("^mod%s+") ~= nil
+    return trimmed:match("^pub%s+mod%s+[%a_][%w_]*%s*;$") ~= nil or trimmed:match("^mod%s+[%a_][%w_]*%s*;$") ~= nil
 end
 
 --- Checks whether a trimmed line declares a specific Rust module.
@@ -49,7 +49,30 @@ end
 ---@return boolean is_declaration Whether the line is a public-use declaration.
 ---
 local function is_pub_use_declaration(trimmed)
-    return trimmed:match("^pub%s+use%s+") ~= nil
+    return trimmed:match("^pub%s+use%s+.+;$") ~= nil
+end
+
+--- Checks whether a trimmed line is a Rust attribute.
+---
+---@param trimmed string Trimmed source line.
+---@return boolean is_attribute Whether the line is an outer or inner attribute.
+---
+local function is_attribute_line(trimmed)
+    return trimmed:match("^#%!%[.*%]$") ~= nil or trimmed:match("^#%[.*%]$") ~= nil
+end
+
+--- Appends pending attribute lines before the next preserved item.
+---
+---@param updated string[] Output line accumulator.
+---@param pending_attributes string[] Attribute lines waiting for their item.
+---@return string[] pending_attributes Cleared pending attribute list.
+---
+local function flush_pending_attributes(updated, pending_attributes)
+    for _, attribute_line in ipairs(pending_attributes) do
+        table.insert(updated, attribute_line)
+    end
+
+    return {}
 end
 
 --- Extracts the expression from a trimmed Rust public-use declaration.
@@ -75,16 +98,23 @@ function M.normalize_mod_layout(mod_path)
     local use_lines = {}
     local other_lines = {}
 
+    local previous_was_attribute = false
     for _, line in ipairs(lines) do
         local trimmed = naming.trim(line)
-        if is_mod_declaration(trimmed) then
+        if is_attribute_line(trimmed) then
+            table.insert(other_lines, line)
+            previous_was_attribute = true
+        elseif not previous_was_attribute and is_mod_declaration(trimmed) then
             table.insert(mod_lines, trimmed)
-        elseif is_pub_use_declaration(trimmed) then
+            previous_was_attribute = false
+        elseif not previous_was_attribute and is_pub_use_declaration(trimmed) then
             table.insert(use_lines, trimmed)
+            previous_was_attribute = false
         elseif trimmed:match("^%s*$") then
             -- Blank lines are rebuilt below.
         else
             table.insert(other_lines, line)
+            previous_was_attribute = false
         end
     end
 
@@ -213,25 +243,34 @@ function M.remove_module_reference(mod_path, module_name)
     local lines = fs.read_lines(mod_path)
     local updated = {}
     local changed = false
+    local pending_attributes = {}
 
     for _, line in ipairs(lines) do
         local trimmed = naming.trim(line)
-        if is_module_declaration_for(trimmed, module_name) then
+        if is_attribute_line(trimmed) or (#pending_attributes > 0 and trimmed == "") then
+            table.insert(pending_attributes, line)
+        elseif is_module_declaration_for(trimmed, module_name) then
+            pending_attributes = {}
             changed = true
         else
             local expression = pub_use_expression(trimmed)
             if expression then
                 expression = naming.trim(expression)
                 if expression == module_name or starts_with(expression, module_name .. "::") then
+                    pending_attributes = {}
                     changed = true
                 else
+                    pending_attributes = flush_pending_attributes(updated, pending_attributes)
                     table.insert(updated, line)
                 end
             else
+                pending_attributes = flush_pending_attributes(updated, pending_attributes)
                 table.insert(updated, line)
             end
         end
     end
+
+    flush_pending_attributes(updated, pending_attributes)
 
     if not changed then
         return false
@@ -307,23 +346,34 @@ function M.remove_use_symbol(mod_path, symbol)
     local lines = fs.read_lines(mod_path)
     local updated = {}
     local changed = false
+    local pending_attributes = {}
 
     for _, line in ipairs(lines) do
         local trimmed = naming.trim(line)
-        local expression = pub_use_expression(trimmed)
-        if expression then
-            local next_expression, did_change = remove_symbol_from_use_expression(naming.trim(expression), symbol)
-            if did_change then
-                changed = true
-            end
-
-            if next_expression then
-                table.insert(updated, "pub use " .. next_expression .. ";")
-            end
+        if is_attribute_line(trimmed) or (#pending_attributes > 0 and trimmed == "") then
+            table.insert(pending_attributes, line)
         else
-            table.insert(updated, line)
+            local expression = pub_use_expression(trimmed)
+            if expression then
+                local next_expression, did_change = remove_symbol_from_use_expression(naming.trim(expression), symbol)
+                if did_change then
+                    changed = true
+                end
+
+                if next_expression then
+                    pending_attributes = flush_pending_attributes(updated, pending_attributes)
+                    table.insert(updated, "pub use " .. next_expression .. ";")
+                else
+                    pending_attributes = {}
+                end
+            else
+                pending_attributes = flush_pending_attributes(updated, pending_attributes)
+                table.insert(updated, line)
+            end
         end
     end
+
+    flush_pending_attributes(updated, pending_attributes)
 
     if not changed then
         return false
@@ -370,6 +420,16 @@ end
 ---
 local function is_route_start_line(line)
     return line:match("<%s*Route%f[%W]") ~= nil or line:match("<%s*PrivateRoute%f[%W]") ~= nil
+end
+
+--- Checks whether a collected route tag block is self-closing.
+---
+---@param block string[] Route tag lines.
+---@return boolean is_self_closing Whether the tag ends with `/>`.
+---
+local function route_tag_is_self_closing(block)
+    local last_line = block[#block] or ""
+    return last_line:match("/>%s*$") ~= nil
 end
 
 --- Checks whether a line is a route-group comment.
@@ -671,14 +731,14 @@ function M.remove_route_view(app_path, view_name)
                     has_view = true
                 end
 
-                if block_line:match("/>%s*$") then
+                if block_line:match("/>%s*$") or block_line:match(">%s*$") then
                     break
                 end
 
                 block_index = block_index + 1
             end
 
-            if has_view then
+            if has_view and route_tag_is_self_closing(block) then
                 changed = true
             else
                 for _, block_line in ipairs(block) do
