@@ -72,10 +72,10 @@ end
 ---
 local function resolve_configured_path(web_root, configured_path)
     if path.is_absolute(configured_path) then
-        return configured_path:gsub("/+$", "")
+        return (configured_path:gsub("/+$", ""))
     end
 
-    return path.join(web_root, configured_path):gsub("/+$", "")
+    return (path.join(web_root, configured_path):gsub("/+$", ""))
 end
 
 --- Builds concrete project paths for a candidate web root.
