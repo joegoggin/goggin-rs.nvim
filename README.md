@@ -46,27 +46,29 @@ Project resolution checks both supported layouts:
   Neovim context.
 - `goggin-rs.naming` converts user input into Rust, file, style, and route
   naming conventions.
-- `goggin-rs.lines` provides shared line-list predicates for source mutation
-  helpers.
+- `goggin-rs.infra` modules provide filesystem, path, line-list, formatting,
+  and Telescope-loading helpers.
 - `goggin-rs.rust` updates Rust module declarations, exports, Leptos routes,
   and empty module directories.
 - `goggin-rs.scss` updates SCSS `@forward` indexes and style directory chains.
-- `goggin-rs.touch` tracks changed files and formats touched Rust/SCSS files.
-- `goggin-rs.component` collects component/style pairs and generates new
+- `goggin-rs.components` collects component/style pairs and generates new
   component Rust/SCSS files.
-- `goggin-rs.page` collects page/style pairs and generates new flat or
+- `goggin-rs.pages` collects page/style pairs and generates new flat or
   module-layout page Rust/SCSS files with app route insertion.
+
+Most package directories also contain focused implementation modules. Prefer
+the package `init.lua` modules above unless a workflow needs a narrower helper.
 
 ## Tests
 
 Run the headless fixture suite with:
 
 ```sh
-nvim --headless -u NONE -l tests/project_spec.lua
+nvim --headless -u NONE -l tests/run.lua
 ```
 
 Run Lua formatting checks with:
 
 ```sh
-stylua --check lua tests/project_spec.lua
+stylua --check lua tests
 ```

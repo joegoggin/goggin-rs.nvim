@@ -1,12 +1,11 @@
---- SCSS index mutation helpers.
+--- SCSS `@forward` index mutation helpers.
 ---
---- Maintains generated `index.scss` files by adding, replacing, removing, and
---- pruning `@forward` declarations for components and pages.
+--- Adds, replaces, removes, and chains SCSS `@forward` declarations for
+--- generated component and page style indexes.
 
-local fs = require("goggin-rs.fs")
-local path = require("goggin-rs.path")
-local prune = require("goggin-rs.prune")
-local touch = require("goggin-rs.touch")
+local fs = require("goggin-rs.infra.fs")
+local path = require("goggin-rs.infra.path")
+local touch = require("goggin-rs.infra.touch")
 
 local M = {}
 
@@ -42,46 +41,6 @@ end
 ---
 local function forward_line(target)
     return string.format('@forward "%s";', target)
-end
-
---- Builds a simple SCSS class block template.
----
----@param class_name string CSS class name.
----@return string[] lines SCSS source lines.
----
-function M.build_class_template(class_name)
-    return {
-        string.format(".%s {", class_name),
-        "}",
-    }
-end
-
---- Resolves a direct or parent-prefixed SCSS partial under a style directory.
----
----@param base_dir string Style directory to inspect.
----@param stem string Rust module stem.
----@param opts table|nil Options; set `parent_prefix = false` to skip parent-prefixed lookup.
----@return string|nil scss_path Matching SCSS partial path.
----
-function M.resolve_partial_style(base_dir, stem, opts)
-    local kebab_stem = stem:gsub("_", "-")
-    local direct_match = path.join(base_dir, "_" .. kebab_stem .. ".scss")
-    if fs.exists(direct_match) then
-        return direct_match
-    end
-
-    local options = opts or {}
-    if options.parent_prefix == false then
-        return nil
-    end
-
-    local parent = path.basename(base_dir):gsub("_", "-")
-    local prefixed_match = path.join(base_dir, "_" .. parent .. "-" .. kebab_stem .. ".scss")
-    if fs.exists(prefixed_match) then
-        return prefixed_match
-    end
-
-    return nil
 end
 
 --- Ensures an SCSS index forwards a target.
@@ -203,22 +162,6 @@ function M.ensure_forward_chain(style_root, segments, target, tracker)
     end
 
     M.ensure_forward(path.join(current, "index.scss"), target, tracker)
-end
-
---- Prunes empty SCSS directories and removes parent forwards.
----
----@param start_dir string Directory where pruning starts.
----@param root_dir string Boundary directory that is never deleted.
----@param tracker table|nil Touched-file tracker for deleted paths and updated parents.
----
-function M.prune_empty_dirs(start_dir, root_dir, tracker)
-    prune.empty_dirs(start_dir, root_dir, {
-        marker_name = "index.scss",
-        tracker = tracker,
-        on_pruned_parent = function(parent, child_name, active_tracker)
-            M.remove_forward(path.join(parent, "index.scss"), child_name, active_tracker)
-        end,
-    })
 end
 
 return M
