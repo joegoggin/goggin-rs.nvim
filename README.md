@@ -52,6 +52,8 @@ Project resolution checks both supported layouts:
   and empty module directories.
 - `goggin-rs.scss` updates SCSS `@forward` indexes and style directory chains.
 - `goggin-rs.touch` tracks changed files and formats touched Rust/SCSS files.
+- `goggin-rs.component` collects component/style pairs and generates new
+  component Rust/SCSS files.
 
 ## Tests
 
