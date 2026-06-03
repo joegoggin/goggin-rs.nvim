@@ -11,6 +11,7 @@ local path = require("goggin-rs.path")
 local project = require("goggin-rs.project")
 local rust = require("goggin-rs.rust")
 local scss = require("goggin-rs.scss")
+local telescope_loader = require("goggin-rs.telescope")
 local touch = require("goggin-rs.touch")
 
 local M = {}
@@ -21,80 +22,6 @@ local M = {}
 ---
 local function notify_warn(message)
     vim.notify(message, vim.log.levels.WARN)
-end
-
---- Resolves project paths and warns when required paths are unavailable.
----
----@param required string[] Required project path keys.
----@return table|nil paths Resolved project paths.
----
-local function resolve_paths(required)
-    local paths, err = project.resolve(required)
-    if not paths then
-        notify_warn(err)
-        return nil
-    end
-
-    return paths
-end
-
---- Returns the basename for a filesystem path.
----
----@param file_path string Path to inspect.
----@return string basename Final path component.
----
-local function basename(file_path)
-    return vim.fn.fnamemodify(file_path, ":t")
-end
-
---- Parses the first Leptos component function name from a Rust file.
----
----@param file_path string Rust file path.
----@return string|nil component_name Parsed component function name.
----
-local function component_name_from_file(file_path)
-    local awaiting_component_fn = false
-
-    for _, line in ipairs(fs.read_lines(file_path)) do
-        if line:match("^%s*#%s*%[%s*component%s*%]") then
-            awaiting_component_fn = true
-        elseif awaiting_component_fn then
-            local component_name = line:match("^%s*pub%s+fn%s+([%w_]+)")
-            if component_name then
-                return component_name
-            end
-
-            local is_attribute = line:match("^%s*#") ~= nil
-            local is_blank = line:match("^%s*$") ~= nil
-            if not is_attribute and not is_blank then
-                awaiting_component_fn = false
-            end
-        end
-    end
-
-    return nil
-end
-
---- Resolves a direct or parent-prefixed partial under a style directory.
----
----@param base_dir string Style directory to inspect.
----@param stem string Rust module stem.
----@return string|nil scss_path Matching SCSS partial path.
----
-local function resolve_partial_style(base_dir, stem)
-    local kebab_stem = stem:gsub("_", "-")
-    local direct_match = path.join(base_dir, "_" .. kebab_stem .. ".scss")
-    if fs.exists(direct_match) then
-        return direct_match
-    end
-
-    local parent = basename(base_dir):gsub("_", "-")
-    local prefixed_match = path.join(base_dir, "_" .. parent .. "-" .. kebab_stem .. ".scss")
-    if fs.exists(prefixed_match) then
-        return prefixed_match
-    end
-
-    return nil
 end
 
 --- Resolves the paired SCSS partial for a page entry.
@@ -120,7 +47,7 @@ function M.resolve_scss_path(page, paths)
     end
 
     local style_parent_dir = path.join(paths.page_styles_dir, page.rust_parent_relative)
-    local by_stem = resolve_partial_style(style_parent_dir, page.module_name)
+    local by_stem = scss.resolve_partial_style(style_parent_dir, page.module_name)
     if by_stem then
         return by_stem
     end
@@ -171,14 +98,14 @@ local function build_page_entry(page_rs, component_name, paths)
         rust_parent_relative = ""
     end
 
-    local file_name = basename(page_rs)
+    local file_name = path.basename(page_rs)
     local module_name = vim.fn.fnamemodify(rust_relative, ":t:r")
     local is_module_layout = file_name == "page.rs"
     local module_relative_dir = module_name
 
     if is_module_layout then
         module_relative_dir = rust_parent_relative
-        module_name = basename(module_relative_dir)
+        module_name = path.basename(module_relative_dir)
     elseif rust_parent_relative ~= "" then
         module_relative_dir = path.join(rust_parent_relative, module_name)
     end
@@ -223,8 +150,8 @@ function M.collect(paths)
     local pages = {}
 
     for _, page_rs in ipairs(page_files) do
-        if basename(page_rs) ~= "mod.rs" then
-            local component_name = component_name_from_file(page_rs)
+        if path.basename(page_rs) ~= "mod.rs" then
+            local component_name = rust.component_name_from_file(page_rs)
 
             if component_name and component_name:sub(-4) == "Page" then
                 local page = build_page_entry(page_rs, component_name, paths)
@@ -294,7 +221,7 @@ local function resolve_page_component_scss_path(page, rust_path, paths)
     local file_stem = vim.fn.fnamemodify(relative_from_components, ":t:r")
     local style_base_dir = path.join(paths.page_styles_dir, page.relative_dir, "components", style_dir_relative)
 
-    return resolve_partial_style(style_base_dir, file_stem)
+    return scss.resolve_partial_style(style_base_dir, file_stem)
 end
 
 --- Collects a page entry and its page-local component entries.
@@ -328,8 +255,8 @@ function M.collect_entries(page, paths)
         local component_files = vim.fn.glob(path.join(components_dir, "**/*.rs"), true, true)
 
         for _, rust_path in ipairs(component_files) do
-            if basename(rust_path) ~= "mod.rs" then
-                local component_name = component_name_from_file(rust_path)
+            if path.basename(rust_path) ~= "mod.rs" then
+                local component_name = rust.component_name_from_file(rust_path)
                 if component_name then
                     table.insert(entries, {
                         label = trim_page_prefix(component_name, page.page_component_name),
@@ -521,56 +448,6 @@ local function build_page_rust_template(component_name, class_name)
     }
 end
 
---- Builds the Rust source template for a generated page-local component.
----
----@param component_name string PascalCase component function name.
----@param class_name string kebab-case CSS class name.
----@param var_name string snake_case local class variable name.
----@return string[] lines Rust source lines.
----
-local function build_page_component_template(component_name, class_name, var_name)
-    return {
-        "use leptos::prelude::*;",
-        "",
-        "use crate::utils::class_name::ClassNameUtil;",
-        "",
-        "#[component]",
-        string.format("pub fn %s(#[prop(optional, into)] class: Option<String>) -> impl IntoView {", component_name),
-        "    // Classes",
-        string.format('    let class_name = ClassNameUtil::new("%s", class);', class_name),
-        string.format("    let %s = class_name.get_root_class();", var_name),
-        "",
-        "    view! {",
-        string.format("        <div class=%s></div>", var_name),
-        "    }",
-        "}",
-    }
-end
-
---- Builds the SCSS source template for a generated page.
----
----@param class_name string kebab-case CSS class name.
----@return string[] lines SCSS source lines.
----
-local function build_scss_template(class_name)
-    return {
-        string.format(".%s {", class_name),
-        "}",
-    }
-end
-
---- Records a changed Rust module file after a mutation helper returns true.
----
----@param tracker table Touched-file tracker.
----@param file_path string File path to mark.
----@param changed boolean Whether the file changed.
----
-local function mark_when_changed(tracker, file_path, changed)
-    if changed then
-        touch.mark(tracker, file_path)
-    end
-end
-
 --- Moves a file or directory and returns a user-facing error on failure.
 ---
 ---@param source string Source path.
@@ -661,16 +538,16 @@ local function ensure_page_export(paths, fs_segments, component_name, tracker)
         local top_mod = path.join(paths.pages_dir, top_segment, "mod.rs")
         local top_use = table.concat(tail_segments, "::") .. "::" .. component_name
 
-        mark_when_changed(tracker, top_mod, rust.ensure_use_declaration(top_mod, top_use))
-        mark_when_changed(tracker, top_mod, rust.normalize_mod_layout(top_mod))
+        touch.mark_when_changed(tracker, top_mod, rust.ensure_use_declaration(top_mod, top_use))
+        touch.mark_when_changed(tracker, top_mod, rust.normalize_mod_layout(top_mod))
         return
     end
 
     if not root_wildcard then
         local root_use = table.concat(fs_segments, "::") .. "::" .. component_name
 
-        mark_when_changed(tracker, pages_root_mod, rust.ensure_use_declaration(pages_root_mod, root_use))
-        mark_when_changed(tracker, pages_root_mod, rust.normalize_mod_layout(pages_root_mod))
+        touch.mark_when_changed(tracker, pages_root_mod, rust.ensure_use_declaration(pages_root_mod, root_use))
+        touch.mark_when_changed(tracker, pages_root_mod, rust.normalize_mod_layout(pages_root_mod))
     end
 end
 
@@ -686,8 +563,8 @@ local function update_page_modules(paths, parent_segments, leaf_segment, tracker
 
     for _, segment in ipairs(parent_segments) do
         local parent_mod = path.join(current_pages_dir, "mod.rs")
-        mark_when_changed(tracker, parent_mod, rust.ensure_mod_declaration(parent_mod, segment))
-        mark_when_changed(tracker, parent_mod, rust.normalize_mod_layout(parent_mod))
+        touch.mark_when_changed(tracker, parent_mod, rust.ensure_mod_declaration(parent_mod, segment))
+        touch.mark_when_changed(tracker, parent_mod, rust.normalize_mod_layout(parent_mod))
 
         current_pages_dir = path.join(current_pages_dir, segment)
         fs.ensure_directory(current_pages_dir)
@@ -695,8 +572,8 @@ local function update_page_modules(paths, parent_segments, leaf_segment, tracker
     end
 
     local leaf_parent_mod = path.join(current_pages_dir, "mod.rs")
-    mark_when_changed(tracker, leaf_parent_mod, rust.ensure_mod_declaration(leaf_parent_mod, leaf_segment))
-    mark_when_changed(tracker, leaf_parent_mod, rust.normalize_mod_layout(leaf_parent_mod))
+    touch.mark_when_changed(tracker, leaf_parent_mod, rust.ensure_mod_declaration(leaf_parent_mod, leaf_segment))
+    touch.mark_when_changed(tracker, leaf_parent_mod, rust.normalize_mod_layout(leaf_parent_mod))
 end
 
 --- Ensures the inner `mod.rs` for a generated module-layout page.
@@ -708,9 +585,9 @@ end
 local function update_module_layout_page_mod(page_dir, component_name, tracker)
     local page_mod = path.join(page_dir, "mod.rs")
 
-    mark_when_changed(tracker, page_mod, rust.ensure_mod_declaration(page_mod, "page"))
-    mark_when_changed(tracker, page_mod, rust.ensure_use_declaration(page_mod, "page::" .. component_name))
-    mark_when_changed(tracker, page_mod, rust.normalize_mod_layout(page_mod))
+    touch.mark_when_changed(tracker, page_mod, rust.ensure_mod_declaration(page_mod, "page"))
+    touch.mark_when_changed(tracker, page_mod, rust.ensure_use_declaration(page_mod, "page::" .. component_name))
+    touch.mark_when_changed(tracker, page_mod, rust.normalize_mod_layout(page_mod))
 end
 
 --- Returns parent route segments from a full route segment list.
@@ -767,7 +644,7 @@ function M.convert_to_module_layout(opts)
         return nil, err
     end
 
-    local paths = options.paths or resolve_paths({ "pages_dir", "page_styles_dir" })
+    local paths = options.paths or project.resolve_or_notify({ "pages_dir", "page_styles_dir" })
     if not paths then
         return nil, "Could not resolve page project paths."
     end
@@ -837,7 +714,7 @@ function M.convert_to_module_layout(opts)
         end
     elseif not fs.exists(target_style_path) then
         local class_name = class_name_from_component(page.page_component_name)
-        fs.write_lines(target_style_path, class_name and build_scss_template(class_name) or {})
+        fs.write_lines(target_style_path, class_name and scss.build_class_template(class_name) or {})
     end
 
     touch.mark(tracker, target_style_path)
@@ -892,7 +769,7 @@ function M.create_component(opts)
         return nil, err
     end
 
-    local paths = options.paths or resolve_paths({ "pages_dir", "page_styles_dir" })
+    local paths = options.paths or project.resolve_or_notify({ "pages_dir", "page_styles_dir" })
     if not paths then
         return nil, "Could not resolve page project paths."
     end
@@ -964,15 +841,15 @@ function M.create_component(opts)
     fs.ensure_directory(rust_dir)
     fs.ensure_directory(style_dir)
 
-    fs.write_lines(rust_path, build_page_component_template(component_name, class_name, module_name))
-    fs.write_lines(scss_path, build_scss_template(class_name))
+    fs.write_lines(rust_path, rust.build_component_template(component_name, class_name, module_name))
+    fs.write_lines(scss_path, scss.build_class_template(class_name))
 
     touch.mark(tracker, rust_path)
     touch.mark(tracker, scss_path)
 
     local page_mod = path.join(page.page_dir, "mod.rs")
-    mark_when_changed(tracker, page_mod, ensure_page_components_module(page_mod))
-    mark_when_changed(tracker, page_mod, rust.normalize_mod_layout(page_mod))
+    touch.mark_when_changed(tracker, page_mod, ensure_page_components_module(page_mod))
+    touch.mark_when_changed(tracker, page_mod, rust.normalize_mod_layout(page_mod))
 
     local components_segments = relative_dir == "" and {} or naming.split_path_segments(relative_dir)
     local current_components_dir = base_rust_dir
@@ -980,21 +857,21 @@ function M.create_component(opts)
 
     for _, segment in ipairs(components_segments) do
         local parent_mod = path.join(current_components_dir, "mod.rs")
-        mark_when_changed(tracker, parent_mod, rust.ensure_mod_declaration(parent_mod, segment))
-        mark_when_changed(tracker, parent_mod, rust.normalize_mod_layout(parent_mod))
+        touch.mark_when_changed(tracker, parent_mod, rust.ensure_mod_declaration(parent_mod, segment))
+        touch.mark_when_changed(tracker, parent_mod, rust.normalize_mod_layout(parent_mod))
 
         current_components_dir = path.join(current_components_dir, segment)
         fs.ensure_directory(current_components_dir)
     end
 
     local components_mod = path.join(current_components_dir, "mod.rs")
-    mark_when_changed(tracker, components_mod, rust.ensure_mod_declaration(components_mod, module_name))
-    mark_when_changed(
+    touch.mark_when_changed(tracker, components_mod, rust.ensure_mod_declaration(components_mod, module_name))
+    touch.mark_when_changed(
         tracker,
         components_mod,
         rust.ensure_use_declaration(components_mod, module_name .. "::" .. component_name)
     )
-    mark_when_changed(tracker, components_mod, rust.normalize_mod_layout(components_mod))
+    touch.mark_when_changed(tracker, components_mod, rust.normalize_mod_layout(components_mod))
 
     scss.ensure_forward(path.join(paths.page_styles_dir, page.relative_dir, "index.scss"), "components", tracker)
     scss.ensure_forward_chain(base_style_dir, components_segments, suffix_kebab, tracker)
@@ -1054,7 +931,7 @@ function M.create(opts)
         return nil, err
     end
 
-    local paths = options.paths or resolve_paths({ "pages_dir", "page_styles_dir", "app_path" })
+    local paths = options.paths or project.resolve_or_notify({ "pages_dir", "page_styles_dir", "app_path" })
     if not paths then
         return nil, "Could not resolve page project paths."
     end
@@ -1104,7 +981,7 @@ function M.create(opts)
     end
 
     fs.write_lines(rust_path, build_page_rust_template(component_name, class_name))
-    fs.write_lines(scss_path, build_scss_template(class_name))
+    fs.write_lines(scss_path, scss.build_class_template(class_name))
 
     local tracker = touch.new()
     touch.mark(tracker, rust_path)
@@ -1123,7 +1000,7 @@ function M.create(opts)
         scss.ensure_forward_chain(paths.page_styles_dir, parent_segments, scss_stem, tracker)
     end
 
-    mark_when_changed(
+    touch.mark_when_changed(
         tracker,
         paths.app_path,
         rust.insert_route(paths.app_path, parsed.route_path, component_name, { private = options.private == true })
@@ -1156,53 +1033,19 @@ end
 ---@return string[] directories Relative page directories.
 ---
 local function collect_page_subdirectories(paths)
-    local directories = vim.fn.glob(path.join(paths.pages_dir, "**/"), true, true)
-    local seen = {}
     local results = {}
 
-    for _, directory in ipairs(directories) do
-        local cleaned = directory:gsub("/$", "")
-        if cleaned ~= paths.pages_dir then
-            local relative = path.relative(paths.pages_dir, cleaned)
-            local is_components_path = relative == "components"
-                or relative:match("^components/")
-                or relative:match("/components$")
-                or relative:match("/components/")
+    for _, relative in ipairs(fs.relative_subdirectories(paths.pages_dir)) do
+        local is_components_path = relative == "components"
+            or relative:match("^components/")
+            or relative:match("/components$")
+            or relative:match("/components/")
 
-            if relative ~= "" and relative ~= cleaned and not is_components_path and not seen[relative] then
-                seen[relative] = true
-                table.insert(results, relative)
-            end
+        if not is_components_path then
+            table.insert(results, relative)
         end
     end
 
-    table.sort(results)
-    return results
-end
-
---- Collects existing page-local component subdirectories for prompts.
----
----@param base_dir string Base page `components` directory.
----@return string[] directories Relative component directories.
----
-local function collect_component_subdirectories(base_dir)
-    local directories = vim.fn.glob(path.join(base_dir, "**/"), true, true)
-    local seen = {}
-    local results = {}
-
-    for _, directory in ipairs(directories) do
-        local cleaned = directory:gsub("/$", "")
-        if cleaned ~= base_dir then
-            local relative = path.relative(base_dir, cleaned)
-
-            if relative ~= "" and relative ~= cleaned and not seen[relative] then
-                seen[relative] = true
-                table.insert(results, relative)
-            end
-        end
-    end
-
-    table.sort(results)
     return results
 end
 
@@ -1249,7 +1092,7 @@ local function choose_page_component_subdirectory(page, on_select)
     local base_dir = path.join(page.page_dir, "components")
     fs.ensure_directory(base_dir)
 
-    local options = collect_component_subdirectories(base_dir)
+    local options = fs.relative_subdirectories(base_dir)
     table.insert(options, "+ Create new sub-directory")
 
     vim.ui.select(options, { prompt = "Select page components sub-directory" }, function(choice)
@@ -1339,19 +1182,27 @@ local function prompt_create_page(paths)
     end)
 end
 
+--- Loads Telescope modules required by page pickers.
+---
+---@return table|nil telescope Loaded Telescope dependencies.
+---
+local function load_telescope_for_pages()
+    local telescope = telescope_loader.load()
+    if not telescope then
+        notify_warn("Telescope is required to pick pages.")
+        return nil
+    end
+
+    return telescope
+end
+
 --- Prompts for a selected page and creates a page-local component.
 ---
 ---@param paths table Resolved project paths.
 ---
 local function prompt_for_page_component_target(paths)
-    local ok_actions, actions = pcall(require, "telescope.actions")
-    local ok_action_state, action_state = pcall(require, "telescope.actions.state")
-    local ok_finders, finders = pcall(require, "telescope.finders")
-    local ok_pickers, pickers = pcall(require, "telescope.pickers")
-    local ok_config, telescope_config = pcall(require, "telescope.config")
-
-    if not (ok_actions and ok_action_state and ok_finders and ok_pickers and ok_config) then
-        notify_warn("Telescope is required to pick pages.")
+    local telescope = load_telescope_for_pages()
+    if not telescope then
         return
     end
 
@@ -1361,10 +1212,10 @@ local function prompt_for_page_component_target(paths)
         return
     end
 
-    pickers
+    telescope.pickers
         .new({}, {
             prompt_title = "Select Page",
-            finder = finders.new_table({
+            finder = telescope.finders.new_table({
                 results = pages,
                 entry_maker = function(page)
                     return {
@@ -1374,11 +1225,11 @@ local function prompt_for_page_component_target(paths)
                     }
                 end,
             }),
-            sorter = telescope_config.values.generic_sorter({}),
+            sorter = telescope.config.values.generic_sorter({}),
             attach_mappings = function(prompt_bufnr)
-                actions.select_default:replace(function()
-                    local selection = action_state.get_selected_entry()
-                    actions.close(prompt_bufnr)
+                telescope.actions.select_default:replace(function()
+                    local selection = telescope.action_state.get_selected_entry()
+                    telescope.actions.close(prompt_bufnr)
 
                     if not selection or not selection.value then
                         return
@@ -1478,7 +1329,7 @@ end
 --- Opens a Telescope picker for existing pages.
 ---
 function M.pick()
-    local paths = resolve_paths({ "pages_dir" })
+    local paths = project.resolve_or_notify({ "pages_dir" })
     if not paths then
         return
     end
@@ -1488,14 +1339,8 @@ function M.pick()
         return
     end
 
-    local ok_actions, actions = pcall(require, "telescope.actions")
-    local ok_action_state, action_state = pcall(require, "telescope.actions.state")
-    local ok_finders, finders = pcall(require, "telescope.finders")
-    local ok_pickers, pickers = pcall(require, "telescope.pickers")
-    local ok_config, telescope_config = pcall(require, "telescope.config")
-
-    if not (ok_actions and ok_action_state and ok_finders and ok_pickers and ok_config) then
-        notify_warn("Telescope is required to pick pages.")
+    local telescope = load_telescope_for_pages()
+    if not telescope then
         return
     end
 
@@ -1505,10 +1350,10 @@ function M.pick()
         return
     end
 
-    pickers
+    telescope.pickers
         .new({}, {
             prompt_title = "Open Page",
-            finder = finders.new_table({
+            finder = telescope.finders.new_table({
                 results = pages,
                 entry_maker = function(page)
                     return {
@@ -1518,20 +1363,14 @@ function M.pick()
                     }
                 end,
             }),
-            sorter = telescope_config.values.generic_sorter({}),
+            sorter = telescope.config.values.generic_sorter({}),
             attach_mappings = function(prompt_bufnr)
-                actions.select_default:replace(function()
-                    local selection = action_state.get_selected_entry()
-                    actions.close(prompt_bufnr)
+                telescope.actions.select_default:replace(function()
+                    local selection = telescope.action_state.get_selected_entry()
+                    telescope.actions.close(prompt_bufnr)
 
                     if selection and selection.value then
-                        pick_page_entries(selection.value, paths, {
-                            actions = actions,
-                            action_state = action_state,
-                            finders = finders,
-                            pickers = pickers,
-                            config = telescope_config,
-                        })
+                        pick_page_entries(selection.value, paths, telescope)
                     end
                 end)
 
@@ -1544,7 +1383,7 @@ end
 --- Prompts for a page route and creates a new page pair.
 ---
 function M.generate()
-    local paths = resolve_paths({ "pages_dir", "page_styles_dir" })
+    local paths = project.resolve_or_notify({ "pages_dir", "page_styles_dir" })
     if not paths then
         return
     end

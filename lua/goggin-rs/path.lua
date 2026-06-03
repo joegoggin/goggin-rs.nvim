@@ -42,6 +42,15 @@ function M.relative(root, path)
     return path
 end
 
+--- Returns the basename for a filesystem path.
+---
+---@param file_path string Path to inspect.
+---@return string basename Final path component.
+---
+function M.basename(file_path)
+    return vim.fn.fnamemodify(file_path, ":t")
+end
+
 --- Checks whether a path is absolute on Unix or Windows.
 ---
 ---@param path string|nil Path to inspect.

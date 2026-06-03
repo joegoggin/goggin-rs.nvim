@@ -84,6 +84,60 @@ local function pub_use_expression(trimmed)
     return trimmed:match("^pub%s+use%s+(.+);$")
 end
 
+--- Parses the first Leptos component function name from a Rust file.
+---
+---@param file_path string Rust file path.
+---@return string|nil component_name Parsed component function name.
+---
+function M.component_name_from_file(file_path)
+    local awaiting_component_fn = false
+
+    for _, line in ipairs(fs.read_lines(file_path)) do
+        if line:match("^%s*#%s*%[%s*component%s*%]") then
+            awaiting_component_fn = true
+        elseif awaiting_component_fn then
+            local component_name = line:match("^%s*pub%s+fn%s+([%w_]+)")
+            if component_name then
+                return component_name
+            end
+
+            local is_attribute = line:match("^%s*#") ~= nil
+            local is_blank = line:match("^%s*$") ~= nil
+            if not is_attribute and not is_blank then
+                awaiting_component_fn = false
+            end
+        end
+    end
+
+    return nil
+end
+
+--- Builds the Rust source template for a generated optional-class component.
+---
+---@param component_name string PascalCase component function name.
+---@param class_name string kebab-case CSS class name.
+---@param var_name string snake_case local class variable name.
+---@return string[] lines Rust source lines.
+---
+function M.build_component_template(component_name, class_name, var_name)
+    return {
+        "use leptos::prelude::*;",
+        "",
+        "use crate::utils::class_name::ClassNameUtil;",
+        "",
+        "#[component]",
+        string.format("pub fn %s(#[prop(optional, into)] class: Option<String>) -> impl IntoView {", component_name),
+        "    // Classes",
+        string.format('    let class_name = ClassNameUtil::new("%s", class);', class_name),
+        string.format("    let %s = class_name.get_root_class();", var_name),
+        "",
+        "    view! {",
+        string.format("        <div class=%s></div>", var_name),
+        "    }",
+        "}",
+    }
+end
+
 --- Normalizes a Rust `mod.rs` file layout.
 ---
 --- Rebuilds the file with module declarations first, public exports second,

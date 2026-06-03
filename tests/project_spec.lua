@@ -201,6 +201,7 @@ test("path helpers preserve join normalize and relative behavior", function()
         root .. "-other/file.rs",
         "relative should leave non-child paths alone"
     )
+    assert_equals(path.basename(path.join(root, "src", "pages", "admin.rs")), "admin.rs", "basename should resolve")
     assert_equals(path.is_absolute(root), true, "absolute unix path should be detected")
     assert_equals(path.is_absolute("C:/web/src"), true, "absolute windows path should be detected")
     assert_equals(path.is_absolute("src/pages"), false, "relative path should not be absolute")
@@ -238,6 +239,13 @@ test("filesystem helpers read write and ensure paths", function()
     fs.write_lines(file_path, { "one", "two" })
     assert_equals(fs.exists(file_path), true, "written file should exist")
     assert_list_equals(fs.read_lines(file_path), { "one", "two" }, "read_lines should return written lines")
+    fs.ensure_directory(path.join(root, "alpha", "beta"))
+    fs.ensure_directory(path.join(root, "alpha", "gamma"))
+    assert_list_equals(
+        fs.relative_subdirectories(root),
+        { "alpha", "alpha/beta", "alpha/gamma", "nested" },
+        "relative_subdirectories should return sorted descendants"
+    )
 
     local empty_file = path.join(root, "empty.txt")
     fs.ensure_file(empty_file)

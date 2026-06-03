@@ -9,6 +9,7 @@ local path = require("goggin-rs.path")
 local project = require("goggin-rs.project")
 local rust = require("goggin-rs.rust")
 local scss = require("goggin-rs.scss")
+local telescope_loader = require("goggin-rs.telescope")
 local touch = require("goggin-rs.touch")
 
 local M = {}
@@ -19,58 +20,6 @@ local M = {}
 ---
 local function notify_warn(message)
     vim.notify(message, vim.log.levels.WARN)
-end
-
---- Resolves project paths and warns when required paths are unavailable.
----
----@param required string[] Required project path keys.
----@return table|nil paths Resolved project paths.
----
-local function resolve_paths(required)
-    local paths, err = project.resolve(required)
-    if not paths then
-        notify_warn(err)
-        return nil
-    end
-
-    return paths
-end
-
---- Parses the first Leptos component function name from a Rust file.
----
----@param file_path string Rust file path.
----@return string|nil component_name Parsed component function name.
----
-local function component_name_from_file(file_path)
-    local awaiting_component_fn = false
-
-    for _, line in ipairs(fs.read_lines(file_path)) do
-        if line:match("^%s*#%s*%[%s*component%s*%]") then
-            awaiting_component_fn = true
-        elseif awaiting_component_fn then
-            local component_name = line:match("^%s*pub%s+fn%s+([%w_]+)")
-            if component_name then
-                return component_name
-            end
-
-            local is_attribute = line:match("^%s*#") ~= nil
-            local is_blank = line:match("^%s*$") ~= nil
-            if not is_attribute and not is_blank then
-                awaiting_component_fn = false
-            end
-        end
-    end
-
-    return nil
-end
-
---- Returns the basename for a filesystem path.
----
----@param file_path string Path to inspect.
----@return string basename Final path component.
----
-local function basename(file_path)
-    return vim.fn.fnamemodify(file_path, ":t")
 end
 
 --- Resolves the paired SCSS partial for a component Rust file.
@@ -98,24 +47,9 @@ function M.resolve_scss_path(rust_path, paths)
     end
 
     local stem = vim.fn.fnamemodify(relative, ":t:r")
-    local kebab_stem = stem:gsub("_", "-")
     local base_dir = path.join(paths.styles_components_dir, relative_dir)
 
-    local direct_match = path.join(base_dir, "_" .. kebab_stem .. ".scss")
-    if fs.exists(direct_match) then
-        return direct_match
-    end
-
-    if relative_dir ~= "" then
-        local parent = vim.fn.fnamemodify(relative_dir, ":t"):gsub("_", "-")
-        local prefixed_match = path.join(base_dir, "_" .. parent .. "-" .. kebab_stem .. ".scss")
-
-        if fs.exists(prefixed_match) then
-            return prefixed_match
-        end
-    end
-
-    return nil
+    return scss.resolve_partial_style(base_dir, stem, { parent_prefix = relative_dir ~= "" })
 end
 
 --- Collects Leptos components under the configured component root.
@@ -132,8 +66,8 @@ function M.collect(paths)
     local components = {}
 
     for _, rust_path in ipairs(rust_files) do
-        if basename(rust_path) ~= "mod.rs" then
-            local component_name = component_name_from_file(rust_path)
+        if path.basename(rust_path) ~= "mod.rs" then
+            local component_name = rust.component_name_from_file(rust_path)
 
             if component_name then
                 local rust_relative = path.relative(paths.components_dir, rust_path)
@@ -195,56 +129,6 @@ local function open_created_pair(rust_path, scss_path)
     end)
 end
 
---- Builds the Rust source template for a generated component.
----
----@param component_name string PascalCase component function name.
----@param module_name string snake_case module and local class variable name.
----@param class_name string kebab-case CSS class name.
----@return string[] lines Rust source lines.
----
-local function build_rust_template(component_name, module_name, class_name)
-    return {
-        "use leptos::prelude::*;",
-        "",
-        "use crate::utils::class_name::ClassNameUtil;",
-        "",
-        "#[component]",
-        string.format("pub fn %s(#[prop(optional, into)] class: Option<String>) -> impl IntoView {", component_name),
-        "    // Classes",
-        string.format('    let class_name = ClassNameUtil::new("%s", class);', class_name),
-        string.format("    let %s = class_name.get_root_class();", module_name),
-        "",
-        "    view! {",
-        string.format("        <div class=%s></div>", module_name),
-        "    }",
-        "}",
-    }
-end
-
---- Builds the SCSS source template for a generated component.
----
----@param class_name string kebab-case CSS class name.
----@return string[] lines SCSS source lines.
----
-local function build_scss_template(class_name)
-    return {
-        string.format(".%s {", class_name),
-        "}",
-    }
-end
-
---- Records a changed Rust module file after a mutation helper returns true.
----
----@param tracker table Touched-file tracker.
----@param file_path string File path to mark.
----@param changed boolean Whether the file changed.
----
-local function mark_when_changed(tracker, file_path, changed)
-    if changed then
-        touch.mark(tracker, file_path)
-    end
-end
-
 --- Ensures Rust module declarations and exports for a generated component.
 ---
 ---@param paths table Resolved project paths.
@@ -259,11 +143,11 @@ local function update_rust_modules(paths, relative_dir, module_name, component_n
 
     for index, segment in ipairs(rust_segments) do
         local parent_mod = path.join(current_rust_dir, "mod.rs")
-        mark_when_changed(tracker, parent_mod, rust.ensure_mod_declaration(parent_mod, segment))
+        touch.mark_when_changed(tracker, parent_mod, rust.ensure_mod_declaration(parent_mod, segment))
 
         if index == 1 then
             local root_mod = path.join(paths.components_dir, "mod.rs")
-            mark_when_changed(tracker, root_mod, rust.ensure_use_declaration(root_mod, segment .. "::*"))
+            touch.mark_when_changed(tracker, root_mod, rust.ensure_use_declaration(root_mod, segment .. "::*"))
         end
 
         current_rust_dir = path.join(current_rust_dir, segment)
@@ -272,17 +156,17 @@ local function update_rust_modules(paths, relative_dir, module_name, component_n
     end
 
     local target_mod = path.join(current_rust_dir, "mod.rs")
-    mark_when_changed(tracker, target_mod, rust.ensure_mod_declaration(target_mod, module_name))
-    mark_when_changed(
+    touch.mark_when_changed(tracker, target_mod, rust.ensure_mod_declaration(target_mod, module_name))
+    touch.mark_when_changed(
         tracker,
         target_mod,
         rust.ensure_use_declaration(target_mod, module_name .. "::" .. component_name)
     )
-    mark_when_changed(tracker, target_mod, rust.normalize_mod_layout(target_mod))
+    touch.mark_when_changed(tracker, target_mod, rust.normalize_mod_layout(target_mod))
 
     if #rust_segments > 0 then
         local root_mod = path.join(paths.components_dir, "mod.rs")
-        mark_when_changed(tracker, root_mod, rust.normalize_mod_layout(root_mod))
+        touch.mark_when_changed(tracker, root_mod, rust.normalize_mod_layout(root_mod))
     end
 end
 
@@ -311,7 +195,7 @@ function M.create(opts)
         return nil, err
     end
 
-    local paths = options.paths or resolve_paths({ "components_dir", "styles_components_dir" })
+    local paths = options.paths or project.resolve_or_notify({ "components_dir", "styles_components_dir" })
     if not paths then
         return nil, "Could not resolve component project paths."
     end
@@ -337,8 +221,8 @@ function M.create(opts)
     fs.ensure_directory(rust_dir)
     fs.ensure_directory(styles_dir)
 
-    fs.write_lines(rust_path, build_rust_template(component_name, module_name, class_name))
-    fs.write_lines(scss_path, build_scss_template(class_name))
+    fs.write_lines(rust_path, rust.build_component_template(component_name, class_name, module_name))
+    fs.write_lines(scss_path, scss.build_class_template(class_name))
 
     local tracker = touch.new()
     touch.mark(tracker, rust_path)
@@ -367,39 +251,13 @@ function M.create(opts)
     }
 end
 
---- Collects existing component subdirectories for the generation prompt.
----
----@param paths table Resolved project paths.
----@return string[] directories Relative component directories.
----
-local function collect_component_subdirectories(paths)
-    local directories = vim.fn.glob(path.join(paths.components_dir, "**/"), true, true)
-    local seen = {}
-    local results = {}
-
-    for _, directory in ipairs(directories) do
-        local cleaned = directory:gsub("/$", "")
-        if cleaned ~= paths.components_dir then
-            local relative = path.relative(paths.components_dir, cleaned)
-
-            if relative ~= "" and relative ~= cleaned and not seen[relative] then
-                seen[relative] = true
-                table.insert(results, relative)
-            end
-        end
-    end
-
-    table.sort(results)
-    return results
-end
-
 --- Prompts for an existing or new component subdirectory.
 ---
 ---@param paths table Resolved project paths.
 ---@param input_name string Raw component name input.
 ---
 local function choose_subdirectory(paths, input_name)
-    local options = collect_component_subdirectories(paths)
+    local options = fs.relative_subdirectories(paths.components_dir)
     table.insert(options, "+ Create new sub-directory")
 
     vim.ui.select(options, { prompt = "Select components sub-directory" }, function(choice)
@@ -440,7 +298,7 @@ end
 --- Opens a Telescope picker for existing components.
 ---
 function M.pick()
-    local paths = resolve_paths({ "components_dir" })
+    local paths = project.resolve_or_notify({ "components_dir" })
     if not paths then
         return
     end
@@ -450,13 +308,8 @@ function M.pick()
         return
     end
 
-    local ok_actions, actions = pcall(require, "telescope.actions")
-    local ok_action_state, action_state = pcall(require, "telescope.actions.state")
-    local ok_finders, finders = pcall(require, "telescope.finders")
-    local ok_pickers, pickers = pcall(require, "telescope.pickers")
-    local ok_config, telescope_config = pcall(require, "telescope.config")
-
-    if not (ok_actions and ok_action_state and ok_finders and ok_pickers and ok_config) then
+    local telescope = telescope_loader.load()
+    if not telescope then
         notify_warn("Telescope is required to pick components.")
         return
     end
@@ -467,10 +320,10 @@ function M.pick()
         return
     end
 
-    pickers
+    telescope.pickers
         .new({}, {
             prompt_title = "Open Component",
-            finder = finders.new_table({
+            finder = telescope.finders.new_table({
                 results = components,
                 entry_maker = function(component)
                     return {
@@ -480,11 +333,11 @@ function M.pick()
                     }
                 end,
             }),
-            sorter = telescope_config.values.generic_sorter({}),
+            sorter = telescope.config.values.generic_sorter({}),
             attach_mappings = function(prompt_bufnr)
-                actions.select_default:replace(function()
-                    local selection = action_state.get_selected_entry()
-                    actions.close(prompt_bufnr)
+                telescope.actions.select_default:replace(function()
+                    local selection = telescope.action_state.get_selected_entry()
+                    telescope.actions.close(prompt_bufnr)
 
                     if selection and selection.value then
                         M.open_pair(selection.value)
@@ -500,7 +353,7 @@ end
 --- Prompts for a component name and creates a new component pair.
 ---
 function M.generate()
-    local paths = resolve_paths({ "components_dir", "styles_components_dir" })
+    local paths = project.resolve_or_notify({ "components_dir", "styles_components_dir" })
     if not paths then
         return
     end

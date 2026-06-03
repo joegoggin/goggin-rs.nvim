@@ -5,6 +5,8 @@
 
 local M = {}
 
+local path = require("goggin-rs.path")
+
 --- Checks whether a filesystem path exists.
 ---
 ---@param path string|nil Path to inspect.
@@ -87,6 +89,32 @@ function M.has_non_blank_lines(lines)
     end
 
     return false
+end
+
+--- Collects relative subdirectory paths below a base directory.
+---
+---@param base_dir string Directory whose descendants should be collected.
+---@return string[] directories Sorted relative subdirectory paths.
+---
+function M.relative_subdirectories(base_dir)
+    local directories = vim.fn.glob(path.join(base_dir, "**/"), true, true)
+    local seen = {}
+    local results = {}
+
+    for _, directory in ipairs(directories) do
+        local cleaned = directory:gsub("/$", "")
+        if cleaned ~= base_dir then
+            local relative = path.relative(base_dir, cleaned)
+
+            if relative ~= "" and relative ~= cleaned and not seen[relative] then
+                seen[relative] = true
+                table.insert(results, relative)
+            end
+        end
+    end
+
+    table.sort(results)
+    return results
 end
 
 --- Deletes a file or directory if it exists.

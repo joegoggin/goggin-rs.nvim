@@ -62,6 +62,21 @@ function M.mark(tracker, file_path)
     return false
 end
 
+--- Marks a touched path only when a mutation helper reports a change.
+---
+---@param tracker table|nil Touched-file tracker with a `mark` method.
+---@param file_path string|nil Path to record.
+---@param changed boolean Whether the path changed.
+---@return boolean marked Whether the path was newly recorded.
+---
+function M.mark_when_changed(tracker, file_path, changed)
+    if changed then
+        return M.mark(tracker, file_path)
+    end
+
+    return false
+end
+
 --- Checks whether any LSP client attached to a buffer supports formatting.
 ---
 ---@param bufnr integer Buffer number to inspect.

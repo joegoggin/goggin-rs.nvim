@@ -196,4 +196,19 @@ function M.resolve(required)
             .. ". Expected either ./web/... from the repo root or ./... from the web root."
 end
 
+--- Resolves project paths and warns when required paths are unavailable.
+---
+---@param required string[] Path keys that must exist for a layout to match.
+---@return table|nil paths Resolved project paths.
+---
+function M.resolve_or_notify(required)
+    local paths, err = M.resolve(required)
+    if not paths then
+        vim.notify(err, vim.log.levels.WARN)
+        return nil
+    end
+
+    return paths
+end
+
 return M
