@@ -1608,6 +1608,303 @@ test("page workflow creates module-layout page files and indexes", function()
     end)
 end)
 
+--- Verifies flat-to-module page conversion.
+---
+--- # Example Under Test
+---
+--- A flat page and component-name SCSS partial are converted to module layout.
+---
+--- # Assertions
+---
+--- - The Rust page moves to `page.rs` and gains a re-exporting page `mod.rs`.
+--- - The SCSS partial moves to `_page.scss` with a module style index.
+--- - The parent style index replaces the flat partial forward with the module forward.
+--- - Touched files are formatted in first-seen order.
+---
+test("page workflow converts flat page to module layout", function()
+    with_stubbed_format(function(formatted)
+        local root = path.join(temp_root, "page-convert-module-layout")
+        create_default_layout(root)
+
+        local paths = {
+            pages_dir = path.join(root, "src", "pages"),
+            page_styles_dir = path.join(root, "styles", "pages"),
+        }
+
+        local flat_rust_path = path.join(paths.pages_dir, "admin.rs")
+        local flat_scss_path = path.join(paths.page_styles_dir, "_admin-page.scss")
+        local module_rust_path = path.join(paths.pages_dir, "admin", "page.rs")
+        local module_scss_path = path.join(paths.page_styles_dir, "admin", "_page.scss")
+        local page_mod = path.join(paths.pages_dir, "admin", "mod.rs")
+        local root_index = path.join(paths.page_styles_dir, "index.scss")
+        local module_index = path.join(paths.page_styles_dir, "admin", "index.scss")
+
+        write_file(flat_rust_path, {
+            "use leptos::prelude::*;",
+            "",
+            "#[component]",
+            "pub fn AdminPage() -> impl IntoView {",
+            "    view! { <div /> }",
+            "}",
+        })
+        write_file(flat_scss_path, {
+            ".admin-page {",
+            "}",
+        })
+        write_file(root_index, {
+            '@forward "admin-page";',
+        })
+
+        local pages = page.collect(paths)
+        local result = assert(page.convert_to_module_layout({
+            page = pages[1],
+            paths = paths,
+            format_opts = { timeout_ms = 50 },
+        }))
+
+        assert_equals(result.converted, true, "conversion result should record that a flat page was converted")
+        assert_equals(result.rust_path, module_rust_path, "conversion result should include module page path")
+        assert_equals(result.scss_path, module_scss_path, "conversion result should include module style path")
+        assert_equals(fs.exists(flat_rust_path), false, "flat Rust page should be moved away")
+        assert_equals(fs.exists(flat_scss_path), false, "flat SCSS partial should be moved away")
+        assert_list_equals(fs.read_lines(module_rust_path), {
+            "use leptos::prelude::*;",
+            "",
+            "#[component]",
+            "pub fn AdminPage() -> impl IntoView {",
+            "    view! { <div /> }",
+            "}",
+        }, "converted page Rust should preserve original content")
+        assert_list_equals(fs.read_lines(module_scss_path), {
+            ".admin-page {",
+            "}",
+        }, "converted page SCSS should preserve original content")
+        assert_list_equals(fs.read_lines(page_mod), {
+            "pub mod page;",
+            "",
+            "pub use page::AdminPage;",
+        }, "converted page mod should declare and re-export page.rs")
+        assert_list_equals(fs.read_lines(root_index), {
+            '@forward "admin";',
+        }, "parent index should forward the module directory")
+        assert_list_equals(fs.read_lines(module_index), {
+            '@forward "page";',
+        }, "module style index should forward the page partial")
+        assert_list_equals(result.touched_paths, {
+            module_rust_path,
+            page_mod,
+            module_scss_path,
+            module_index,
+            root_index,
+        }, "conversion should return touched files in mutation order")
+        assert_list_equals(formatted, {
+            module_rust_path .. ":50",
+            page_mod .. ":50",
+            module_scss_path .. ":50",
+            module_index .. ":50",
+            root_index .. ":50",
+        }, "conversion should format touched Rust and SCSS files")
+    end)
+end)
+
+--- Verifies nested page-local component generation.
+---
+--- # Example Under Test
+---
+--- A flat nested page is converted to module layout while a page-local component
+--- is generated under a nested components directory.
+---
+--- # Assertions
+---
+--- - The page is converted before component creation.
+--- - Generated component Rust and SCSS use page-prefixed names and classes.
+--- - Rust modules and style indexes forward through nested component directories.
+--- - Page entry collection includes the page and generated local component.
+---
+test("page workflow creates nested page components and converts flat pages", function()
+    with_stubbed_format(function(formatted)
+        local root = path.join(temp_root, "page-create-local-component")
+        create_default_layout(root)
+
+        local paths = {
+            pages_dir = path.join(root, "src", "pages"),
+            page_styles_dir = path.join(root, "styles", "pages"),
+        }
+
+        local flat_rust_path = path.join(paths.pages_dir, "admin", "settings.rs")
+        local flat_scss_path = path.join(paths.page_styles_dir, "admin", "_settings-page.scss")
+        local module_rust_path = path.join(paths.pages_dir, "admin", "settings", "page.rs")
+        local module_scss_path = path.join(paths.page_styles_dir, "admin", "settings", "_page.scss")
+        local page_mod = path.join(paths.pages_dir, "admin", "settings", "mod.rs")
+        local component_rust_path =
+            path.join(paths.pages_dir, "admin", "settings", "components", "panels", "steps", "workflow.rs")
+        local component_scss_path =
+            path.join(paths.page_styles_dir, "admin", "settings", "components", "panels", "steps", "_workflow.scss")
+        local components_mod = path.join(paths.pages_dir, "admin", "settings", "components", "mod.rs")
+        local panels_mod = path.join(paths.pages_dir, "admin", "settings", "components", "panels", "mod.rs")
+        local steps_mod = path.join(paths.pages_dir, "admin", "settings", "components", "panels", "steps", "mod.rs")
+        local admin_index = path.join(paths.page_styles_dir, "admin", "index.scss")
+        local page_index = path.join(paths.page_styles_dir, "admin", "settings", "index.scss")
+        local components_index = path.join(paths.page_styles_dir, "admin", "settings", "components", "index.scss")
+        local panels_index = path.join(paths.page_styles_dir, "admin", "settings", "components", "panels", "index.scss")
+        local steps_index =
+            path.join(paths.page_styles_dir, "admin", "settings", "components", "panels", "steps", "index.scss")
+
+        write_file(flat_rust_path, {
+            "use leptos::prelude::*;",
+            "",
+            "#[component]",
+            "pub fn SettingsPage() -> impl IntoView {",
+            "    view! { <div /> }",
+            "}",
+        })
+        write_file(flat_scss_path, {
+            ".settings-page {",
+            "}",
+        })
+        write_file(admin_index, {
+            '@forward "settings-page";',
+        })
+
+        local pages = page.collect(paths)
+        local result = assert(page.create_component({
+            page = pages[1],
+            input_name = "Workflow",
+            relative_dir = "Panels/Steps",
+            paths = paths,
+            format_opts = { timeout_ms = 60 },
+        }))
+
+        assert_equals(result.converted_page, true, "flat page should be converted before component creation")
+        assert_equals(result.component_name, "SettingsPageWorkflow", "component should be page-prefixed")
+        assert_equals(result.module_name, "workflow", "component module should be suffix-based")
+        assert_equals(result.class_name, "settings-page-workflow", "component class should be page-prefixed")
+        assert_equals(result.relative_dir, "panels/steps", "relative component directory should normalize")
+        assert_equals(result.rust_path, component_rust_path, "result should include component Rust path")
+        assert_equals(result.scss_path, component_scss_path, "result should include component SCSS path")
+        assert_equals(fs.exists(flat_rust_path), false, "flat page Rust should be moved during conversion")
+        assert_equals(fs.exists(flat_scss_path), false, "flat page SCSS should be moved during conversion")
+        assert_list_equals(fs.read_lines(module_rust_path), {
+            "use leptos::prelude::*;",
+            "",
+            "#[component]",
+            "pub fn SettingsPage() -> impl IntoView {",
+            "    view! { <div /> }",
+            "}",
+        }, "converted page Rust should preserve original content")
+        assert_list_equals(fs.read_lines(module_scss_path), {
+            ".settings-page {",
+            "}",
+        }, "converted page SCSS should preserve original content")
+        assert_list_equals(fs.read_lines(component_rust_path), {
+            "use leptos::prelude::*;",
+            "",
+            "use crate::utils::class_name::ClassNameUtil;",
+            "",
+            "#[component]",
+            "pub fn SettingsPageWorkflow(#[prop(optional, into)] class: Option<String>) -> impl IntoView {",
+            "    // Classes",
+            '    let class_name = ClassNameUtil::new("settings-page-workflow", class);',
+            "    let workflow = class_name.get_root_class();",
+            "",
+            "    view! {",
+            "        <div class=workflow></div>",
+            "    }",
+            "}",
+        }, "page component Rust template should match expected output")
+        assert_list_equals(fs.read_lines(component_scss_path), {
+            ".settings-page-workflow {",
+            "}",
+        }, "page component SCSS template should match expected output")
+        assert_list_equals(fs.read_lines(page_mod), {
+            "mod components;",
+            "pub mod page;",
+            "",
+            "pub use page::SettingsPage;",
+        }, "page mod should declare private components and re-export the page")
+        assert_list_equals(fs.read_lines(components_mod), {
+            "pub mod panels;",
+        }, "components mod should declare the first nested component directory")
+        assert_list_equals(fs.read_lines(panels_mod), {
+            "pub mod steps;",
+        }, "nested component parent mod should declare its child")
+        assert_list_equals(fs.read_lines(steps_mod), {
+            "pub mod workflow;",
+            "",
+            "pub use workflow::SettingsPageWorkflow;",
+        }, "target component mod should declare and export the component")
+        assert_list_equals(fs.read_lines(admin_index), {
+            '@forward "settings";',
+        }, "parent page style index should forward the converted page directory")
+        assert_list_equals(fs.read_lines(page_index), {
+            '@forward "page";',
+            '@forward "components";',
+        }, "page style index should forward page and page components")
+        assert_list_equals(fs.read_lines(components_index), {
+            '@forward "panels";',
+        }, "components style index should forward the first nested directory")
+        assert_list_equals(fs.read_lines(panels_index), {
+            '@forward "steps";',
+        }, "nested style index should forward its child directory")
+        assert_list_equals(fs.read_lines(steps_index), {
+            '@forward "workflow";',
+        }, "target style index should forward the component partial")
+
+        local collected_pages = page.collect(paths)
+        local entries = page.collect_entries(collected_pages[1], paths)
+        assert_equals(#entries, 2, "page entry collection should include page and local component")
+        assert_equals(entries[1].label, "Page", "page entry should remain first")
+        assert_equals(entries[1].rust_path, module_rust_path, "page entry should point at module page")
+        assert_equals(entries[2].label, "Workflow", "component entry should trim the page prefix")
+        assert_equals(entries[2].rust_path, component_rust_path, "component entry should point at generated Rust")
+        assert_equals(entries[2].scss_path, component_scss_path, "component entry should resolve generated SCSS")
+
+        assert_list_equals(result.touched_paths, {
+            module_rust_path,
+            page_mod,
+            module_scss_path,
+            page_index,
+            admin_index,
+            component_rust_path,
+            component_scss_path,
+            components_mod,
+            panels_mod,
+            steps_mod,
+            components_index,
+            panels_index,
+            steps_index,
+        }, "page component create should return touched files in mutation order")
+        assert_list_equals(formatted, {
+            module_rust_path .. ":60",
+            page_mod .. ":60",
+            module_scss_path .. ":60",
+            page_index .. ":60",
+            admin_index .. ":60",
+            component_rust_path .. ":60",
+            component_scss_path .. ":60",
+            components_mod .. ":60",
+            panels_mod .. ":60",
+            steps_mod .. ":60",
+            components_index .. ":60",
+            panels_index .. ":60",
+            steps_index .. ":60",
+        }, "page component create should format touched Rust and SCSS files once")
+
+        local duplicate, duplicate_err = page.create_component({
+            page = collected_pages[1],
+            input_name = "Workflow",
+            relative_dir = "panels/steps",
+            paths = paths,
+        })
+        assert_equals(duplicate, nil, "duplicate component creation should abort")
+        assert_match(
+            duplicate_err,
+            "Page component already exists:",
+            "duplicate error should name existing Rust target"
+        )
+    end)
+end)
+
 --- Verifies page generation aborts before writing nested pages under flat pages.
 ---
 --- # Example Under Test

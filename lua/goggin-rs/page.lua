@@ -253,6 +253,116 @@ function M.collect(paths)
     return pages
 end
 
+--- Trims a page prefix from a page-local component label.
+---
+---@param component_name string Page-local component name.
+---@param page_component_name string Page component name.
+---@return string label Display label.
+---
+local function trim_page_prefix(component_name, page_component_name)
+    if page_component_name:sub(-4) ~= "Page" then
+        return component_name
+    end
+
+    local prefix = page_component_name
+    if component_name:sub(1, #prefix) == prefix and #component_name > #prefix then
+        return component_name:sub(#prefix + 1)
+    end
+
+    return component_name
+end
+
+--- Resolves the paired SCSS partial for a page-local component.
+---
+---@param page table Page entry from `collect`.
+---@param rust_path string Page-local component Rust path.
+---@param paths table Resolved project paths.
+---@return string|nil scss_path Matching SCSS path when one exists.
+---
+local function resolve_page_component_scss_path(page, rust_path, paths)
+    local components_dir = path.join(page.page_dir, "components")
+    local relative_from_components = path.relative(components_dir, rust_path)
+    if relative_from_components == rust_path then
+        return nil
+    end
+
+    local style_dir_relative = vim.fn.fnamemodify(relative_from_components, ":h")
+    if style_dir_relative == "." then
+        style_dir_relative = ""
+    end
+
+    local file_stem = vim.fn.fnamemodify(relative_from_components, ":t:r")
+    local style_base_dir = path.join(paths.page_styles_dir, page.relative_dir, "components", style_dir_relative)
+
+    return resolve_partial_style(style_base_dir, file_stem)
+end
+
+--- Collects a page entry and its page-local component entries.
+---
+---@param page table Page entry from `collect`.
+---@param paths table Resolved project paths.
+---@return table[] entries Page entry first, followed by sorted component entries.
+---
+function M.collect_entries(page, paths)
+    if not page then
+        return {}
+    end
+
+    local entries = {
+        {
+            label = "Page",
+            entry_type = "page",
+            rust_path = page.page_rs or page.rust_path,
+            rust_relative = page.rust_relative,
+            scss_path = page.page_style_path or page.scss_path,
+            component_name = page.page_component_name or page.component_name,
+        },
+    }
+
+    if not page.is_module_layout or not paths or not paths.page_styles_dir then
+        return entries
+    end
+
+    local components_dir = path.join(page.page_dir, "components")
+    if fs.is_directory(components_dir) then
+        local component_files = vim.fn.glob(path.join(components_dir, "**/*.rs"), true, true)
+
+        for _, rust_path in ipairs(component_files) do
+            if basename(rust_path) ~= "mod.rs" then
+                local component_name = component_name_from_file(rust_path)
+                if component_name then
+                    table.insert(entries, {
+                        label = trim_page_prefix(component_name, page.page_component_name),
+                        entry_type = "component",
+                        rust_path = rust_path,
+                        rust_relative = path.relative(paths.pages_dir, rust_path),
+                        scss_path = resolve_page_component_scss_path(page, rust_path, paths),
+                        component_name = component_name,
+                    })
+                end
+            end
+        end
+    end
+
+    table.sort(entries, function(left, right)
+        if left.entry_type == "page" and right.entry_type ~= "page" then
+            return true
+        end
+
+        if right.entry_type == "page" and left.entry_type ~= "page" then
+            return false
+        end
+
+        if left.label == right.label then
+            return left.rust_relative < right.rust_relative
+        end
+
+        return left.label < right.label
+    end)
+
+    return entries
+end
+
 --- Opens a Rust page and its paired SCSS partial when present.
 ---
 ---@param page table Page entry containing `page_rs` and optional `page_style_path`.
@@ -411,6 +521,32 @@ local function build_page_rust_template(component_name, class_name)
     }
 end
 
+--- Builds the Rust source template for a generated page-local component.
+---
+---@param component_name string PascalCase component function name.
+---@param class_name string kebab-case CSS class name.
+---@param var_name string snake_case local class variable name.
+---@return string[] lines Rust source lines.
+---
+local function build_page_component_template(component_name, class_name, var_name)
+    return {
+        "use leptos::prelude::*;",
+        "",
+        "use crate::utils::class_name::ClassNameUtil;",
+        "",
+        "#[component]",
+        string.format("pub fn %s(#[prop(optional, into)] class: Option<String>) -> impl IntoView {", component_name),
+        "    // Classes",
+        string.format('    let class_name = ClassNameUtil::new("%s", class);', class_name),
+        string.format("    let %s = class_name.get_root_class();", var_name),
+        "",
+        "    view! {",
+        string.format("        <div class=%s></div>", var_name),
+        "    }",
+        "}",
+    }
+end
+
 --- Builds the SCSS source template for a generated page.
 ---
 ---@param class_name string kebab-case CSS class name.
@@ -433,6 +569,61 @@ local function mark_when_changed(tracker, file_path, changed)
     if changed then
         touch.mark(tracker, file_path)
     end
+end
+
+--- Moves a file or directory and returns a user-facing error on failure.
+---
+---@param source string Source path.
+---@param destination string Destination path.
+---@return boolean ok Whether the move succeeded.
+---@return string|nil err Error message when moving fails.
+---
+local function move_path(source, destination)
+    if source == destination then
+        return true, nil
+    end
+
+    if vim.fn.rename(source, destination) == 0 then
+        return true, nil
+    end
+
+    return false, string.format("Failed to move %s to %s", source, destination)
+end
+
+--- Returns the SCSS forward target represented by a partial path.
+---
+---@param style_path string SCSS partial path.
+---@return string target Forward target without a leading underscore.
+---
+local function style_forward_target_from_path(style_path)
+    local stem = vim.fn.fnamemodify(style_path, ":t:r")
+    return stem:gsub("^_", "")
+end
+
+--- Ensures a module-layout page declares its private components module.
+---
+---@param page_mod_path string Page module `mod.rs` path.
+---@return boolean changed Whether the file changed.
+---
+local function ensure_page_components_module(page_mod_path)
+    fs.ensure_file(page_mod_path)
+
+    local lines = fs.read_lines(page_mod_path)
+    if line_utils.has_trimmed(lines, "mod components;") or line_utils.has_trimmed(lines, "pub mod components;") then
+        return false
+    end
+
+    local first_public_mod = nil
+    for index, line in ipairs(lines) do
+        if naming.trim(line):match("^pub%s+mod%s+") then
+            first_public_mod = index
+            break
+        end
+    end
+
+    table.insert(lines, first_public_mod or (#lines + 1), "mod components;")
+    fs.write_lines(page_mod_path, lines)
+    return true
 end
 
 --- Checks whether root pages exports already wildcard-export a top segment.
@@ -558,6 +749,275 @@ local function validate_no_flat_parent_page(paths, parent_segments)
     end
 
     return nil
+end
+
+--- Converts a flat page file into module layout.
+---
+---@param opts table Options containing `page`; accepts `paths`, `format_opts`, and `open`.
+---@return table|nil result Conversion result with paths and touched files.
+---@return string|nil err Error message when conversion fails.
+---
+function M.convert_to_module_layout(opts)
+    local options = opts or {}
+    local page = options.page
+
+    if not page then
+        local err = "Page is required."
+        notify_warn(err)
+        return nil, err
+    end
+
+    local paths = options.paths or resolve_paths({ "pages_dir", "page_styles_dir" })
+    if not paths then
+        return nil, "Could not resolve page project paths."
+    end
+
+    if page.is_module_layout then
+        return {
+            page = page,
+            converted = false,
+            rust_path = page.page_rs or page.rust_path,
+            scss_path = page.page_style_path or page.scss_path,
+            touched_paths = {},
+            formatted_count = 0,
+        }
+    end
+
+    local source_rust_path = page.page_rs or page.rust_path
+    local target_page_dir = page.page_dir
+    local target_rust_path = path.join(target_page_dir, "page.rs")
+    local module_style_dir = path.join(paths.page_styles_dir, page.module_relative_dir)
+    local target_style_path = path.join(module_style_dir, "_page.scss")
+    local existing_style_path = page.page_style_path or page.scss_path
+
+    if not fs.exists(source_rust_path) then
+        local err = "Page file not found: " .. source_rust_path
+        notify_warn(err)
+        return nil, err
+    end
+
+    if fs.exists(target_rust_path) then
+        local err = "Cannot convert page. Target already exists: " .. target_rust_path
+        notify_warn(err)
+        return nil, err
+    end
+
+    if
+        existing_style_path
+        and fs.exists(existing_style_path)
+        and existing_style_path ~= target_style_path
+        and fs.exists(target_style_path)
+    then
+        local err = "Cannot convert page style. Target already exists: " .. target_style_path
+        notify_warn(err)
+        return nil, err
+    end
+
+    fs.ensure_directory(target_page_dir)
+    fs.ensure_directory(module_style_dir)
+
+    local moved_page, page_move_error = move_path(source_rust_path, target_rust_path)
+    if not moved_page then
+        notify_warn(page_move_error)
+        return nil, page_move_error
+    end
+
+    local tracker = touch.new()
+    touch.mark(tracker, target_rust_path)
+
+    update_module_layout_page_mod(target_page_dir, page.page_component_name, tracker)
+
+    if existing_style_path and fs.exists(existing_style_path) then
+        if existing_style_path ~= target_style_path then
+            local moved_style, style_move_error = move_path(existing_style_path, target_style_path)
+            if not moved_style then
+                notify_warn(style_move_error)
+                return nil, style_move_error
+            end
+        end
+    elseif not fs.exists(target_style_path) then
+        local class_name = class_name_from_component(page.page_component_name)
+        fs.write_lines(target_style_path, class_name and build_scss_template(class_name) or {})
+    end
+
+    touch.mark(tracker, target_style_path)
+    scss.ensure_forward(path.join(module_style_dir, "index.scss"), "page", tracker)
+
+    local parent_style_dir = path.join(paths.page_styles_dir, page.rust_parent_relative)
+    local parent_style_index = path.join(parent_style_dir, "index.scss")
+    local previous_forward_target = existing_style_path and style_forward_target_from_path(existing_style_path)
+        or naming.to_kebab_case(page.module_name)
+    scss.replace_forward(parent_style_index, previous_forward_target, page.module_name, tracker)
+
+    page.page_rs = target_rust_path
+    page.rust_path = target_rust_path
+    page.rust_relative = path.relative(paths.pages_dir, target_rust_path)
+    page.rust_parent_relative = page.module_relative_dir
+    page.is_module_layout = true
+    page.page_style_path = target_style_path
+    page.scss_path = target_style_path
+
+    local formatted = 0
+    if options.format ~= false then
+        formatted = touch.format_touched(tracker, options.format_opts)
+    end
+
+    if options.open then
+        open_created_pair(target_rust_path, target_style_path)
+    end
+
+    return {
+        page = page,
+        converted = true,
+        rust_path = target_rust_path,
+        scss_path = target_style_path,
+        touched_paths = tracker:paths(),
+        formatted_count = formatted,
+    }
+end
+
+--- Creates Rust and SCSS files for a page-local component.
+---
+---@param opts table Options containing `page` and `input_name`; accepts `relative_dir`, `paths`, `open`, and `format_opts`.
+---@return table|nil result Creation result with paths and touched files.
+---@return string|nil err Error message when creation fails.
+---
+function M.create_component(opts)
+    local options = opts or {}
+    local page = options.page
+
+    if not page then
+        local err = "Page is required."
+        notify_warn(err)
+        return nil, err
+    end
+
+    local paths = options.paths or resolve_paths({ "pages_dir", "page_styles_dir" })
+    if not paths then
+        return nil, "Could not resolve page project paths."
+    end
+
+    local normalized_input = naming.to_pascal_case(options.input_name)
+    if normalized_input == "" then
+        local err = "Invalid component name."
+        notify_warn(err)
+        return nil, err
+    end
+
+    local suffix = normalized_input
+    if normalized_input:sub(1, #page.page_component_name) == page.page_component_name then
+        suffix = normalized_input:sub(#page.page_component_name + 1)
+    end
+
+    if suffix == "" then
+        local err = "Component name must add a suffix to " .. page.page_component_name
+        notify_warn(err)
+        return nil, err
+    end
+
+    local relative_dir = naming.normalize_relative_dir(options.relative_dir or "") or ""
+    local module_name = naming.to_snake_case(suffix)
+    local suffix_kebab = naming.to_kebab_case(suffix)
+    local page_prefix = naming.to_kebab_case(page.page_component_name:gsub("Page$", "")) .. "-page"
+    local class_name = page_prefix .. "-" .. suffix_kebab
+    local component_name = page.page_component_name .. suffix
+    local base_rust_dir = path.join(page.page_dir, "components")
+    local base_style_dir = path.join(paths.page_styles_dir, page.relative_dir, "components")
+    local rust_dir = path.join(base_rust_dir, relative_dir)
+    local style_dir = path.join(base_style_dir, relative_dir)
+    local rust_path = path.join(rust_dir, module_name .. ".rs")
+    local scss_path = path.join(style_dir, "_" .. suffix_kebab .. ".scss")
+
+    if fs.exists(rust_path) then
+        local err = "Page component already exists: " .. rust_path
+        notify_warn(err)
+        return nil, err
+    end
+
+    if fs.exists(scss_path) then
+        local err = "Page component style already exists: " .. scss_path
+        notify_warn(err)
+        return nil, err
+    end
+
+    local tracker = touch.new()
+    local converted = false
+
+    if not page.is_module_layout then
+        local conversion, conversion_error = M.convert_to_module_layout({
+            page = page,
+            paths = paths,
+            format_opts = options.format_opts,
+            format = false,
+        })
+
+        if not conversion then
+            return nil, conversion_error
+        end
+
+        converted = conversion.converted == true
+        for _, touched_path in ipairs(conversion.touched_paths) do
+            touch.mark(tracker, touched_path)
+        end
+    end
+
+    fs.ensure_directory(rust_dir)
+    fs.ensure_directory(style_dir)
+
+    fs.write_lines(rust_path, build_page_component_template(component_name, class_name, module_name))
+    fs.write_lines(scss_path, build_scss_template(class_name))
+
+    touch.mark(tracker, rust_path)
+    touch.mark(tracker, scss_path)
+
+    local page_mod = path.join(page.page_dir, "mod.rs")
+    mark_when_changed(tracker, page_mod, ensure_page_components_module(page_mod))
+    mark_when_changed(tracker, page_mod, rust.normalize_mod_layout(page_mod))
+
+    local components_segments = relative_dir == "" and {} or naming.split_path_segments(relative_dir)
+    local current_components_dir = base_rust_dir
+    fs.ensure_directory(current_components_dir)
+
+    for _, segment in ipairs(components_segments) do
+        local parent_mod = path.join(current_components_dir, "mod.rs")
+        mark_when_changed(tracker, parent_mod, rust.ensure_mod_declaration(parent_mod, segment))
+        mark_when_changed(tracker, parent_mod, rust.normalize_mod_layout(parent_mod))
+
+        current_components_dir = path.join(current_components_dir, segment)
+        fs.ensure_directory(current_components_dir)
+    end
+
+    local components_mod = path.join(current_components_dir, "mod.rs")
+    mark_when_changed(tracker, components_mod, rust.ensure_mod_declaration(components_mod, module_name))
+    mark_when_changed(
+        tracker,
+        components_mod,
+        rust.ensure_use_declaration(components_mod, module_name .. "::" .. component_name)
+    )
+    mark_when_changed(tracker, components_mod, rust.normalize_mod_layout(components_mod))
+
+    scss.ensure_forward(path.join(paths.page_styles_dir, page.relative_dir, "index.scss"), "components", tracker)
+    scss.ensure_forward_chain(base_style_dir, components_segments, suffix_kebab, tracker)
+
+    local formatted = touch.format_touched(tracker, options.format_opts)
+
+    if options.open then
+        open_created_pair(rust_path, scss_path)
+    end
+
+    return {
+        page = page,
+        converted_page = converted,
+        component_name = component_name,
+        suffix = suffix,
+        module_name = module_name,
+        class_name = class_name,
+        relative_dir = relative_dir,
+        rust_path = rust_path,
+        scss_path = scss_path,
+        touched_paths = tracker:paths(),
+        formatted_count = formatted,
+    }
 end
 
 --- Creates Rust and SCSS files for a new page and inserts its app route.
@@ -720,6 +1180,32 @@ local function collect_page_subdirectories(paths)
     return results
 end
 
+--- Collects existing page-local component subdirectories for prompts.
+---
+---@param base_dir string Base page `components` directory.
+---@return string[] directories Relative component directories.
+---
+local function collect_component_subdirectories(base_dir)
+    local directories = vim.fn.glob(path.join(base_dir, "**/"), true, true)
+    local seen = {}
+    local results = {}
+
+    for _, directory in ipairs(directories) do
+        local cleaned = directory:gsub("/$", "")
+        if cleaned ~= base_dir then
+            local relative = path.relative(base_dir, cleaned)
+
+            if relative ~= "" and relative ~= cleaned and not seen[relative] then
+                seen[relative] = true
+                table.insert(results, relative)
+            end
+        end
+    end
+
+    table.sort(results)
+    return results
+end
+
 --- Prompts for an existing or new page subdirectory.
 ---
 ---@param paths table Resolved project paths.
@@ -736,6 +1222,43 @@ local function choose_page_subdirectory(paths, on_select)
 
         if choice == "+ Create new sub-directory" then
             vim.ui.input({ prompt = "New sub-directory (relative to pages): " }, function(new_dir)
+                if not new_dir or naming.trim(new_dir) == "" then
+                    return
+                end
+
+                local normalized = naming.normalize_relative_dir(new_dir)
+                if normalized == "" then
+                    notify_warn("Invalid sub-directory.")
+                    return
+                end
+
+                on_select(normalized)
+            end)
+        else
+            on_select(choice)
+        end
+    end)
+end
+
+--- Prompts for an existing or new page-local component subdirectory.
+---
+---@param page table Page entry from `collect`.
+---@param on_select fun(relative_dir: string)
+---
+local function choose_page_component_subdirectory(page, on_select)
+    local base_dir = path.join(page.page_dir, "components")
+    fs.ensure_directory(base_dir)
+
+    local options = collect_component_subdirectories(base_dir)
+    table.insert(options, "+ Create new sub-directory")
+
+    vim.ui.select(options, { prompt = "Select page components sub-directory" }, function(choice)
+        if not choice then
+            return
+        end
+
+        if choice == "+ Create new sub-directory" then
+            vim.ui.input({ prompt = "New sub-directory (relative to page components): " }, function(new_dir)
                 if not new_dir or naming.trim(new_dir) == "" then
                     return
                 end
@@ -816,6 +1339,142 @@ local function prompt_create_page(paths)
     end)
 end
 
+--- Prompts for a selected page and creates a page-local component.
+---
+---@param paths table Resolved project paths.
+---
+local function prompt_for_page_component_target(paths)
+    local ok_actions, actions = pcall(require, "telescope.actions")
+    local ok_action_state, action_state = pcall(require, "telescope.actions.state")
+    local ok_finders, finders = pcall(require, "telescope.finders")
+    local ok_pickers, pickers = pcall(require, "telescope.pickers")
+    local ok_config, telescope_config = pcall(require, "telescope.config")
+
+    if not (ok_actions and ok_action_state and ok_finders and ok_pickers and ok_config) then
+        notify_warn("Telescope is required to pick pages.")
+        return
+    end
+
+    local pages = M.collect(paths)
+    if #pages == 0 then
+        notify_warn("No page components found in " .. paths.pages_dir)
+        return
+    end
+
+    pickers
+        .new({}, {
+            prompt_title = "Select Page",
+            finder = finders.new_table({
+                results = pages,
+                entry_maker = function(page)
+                    return {
+                        value = page,
+                        display = page.display_name .. "  " .. page.rust_relative,
+                        ordinal = page.display_name .. " " .. page.page_component_name .. " " .. page.rust_relative,
+                    }
+                end,
+            }),
+            sorter = telescope_config.values.generic_sorter({}),
+            attach_mappings = function(prompt_bufnr)
+                actions.select_default:replace(function()
+                    local selection = action_state.get_selected_entry()
+                    actions.close(prompt_bufnr)
+
+                    if not selection or not selection.value then
+                        return
+                    end
+
+                    local selected_page = selection.value
+
+                    vim.schedule(function()
+                        vim.ui.input({ prompt = "Component name (e.g. Workflow): " }, function(component_input)
+                            if not component_input or naming.trim(component_input) == "" then
+                                return
+                            end
+
+                            vim.ui.select(
+                                { "No", "Yes" },
+                                { prompt = "Nest component in a sub-directory?" },
+                                function(choice)
+                                    if not choice then
+                                        return
+                                    end
+
+                                    if choice == "No" then
+                                        M.create_component({
+                                            page = selected_page,
+                                            input_name = component_input,
+                                            relative_dir = "",
+                                            paths = paths,
+                                            open = true,
+                                        })
+                                    else
+                                        choose_page_component_subdirectory(selected_page, function(relative_dir)
+                                            M.create_component({
+                                                page = selected_page,
+                                                input_name = component_input,
+                                                relative_dir = relative_dir,
+                                                paths = paths,
+                                                open = true,
+                                            })
+                                        end)
+                                    end
+                                end
+                            )
+                        end)
+                    end)
+                end)
+
+                return true
+            end,
+        })
+        :find()
+end
+
+--- Opens or prompts for entries inside a selected page.
+---
+---@param page table Page entry from `collect`.
+---@param paths table Resolved project paths.
+---@param telescope table Telescope dependency table.
+---
+local function pick_page_entries(page, paths, telescope)
+    local entries = M.collect_entries(page, paths)
+
+    if #entries == 1 and entries[1].entry_type == "page" then
+        M.open_pair(entries[1])
+        return
+    end
+
+    telescope.pickers
+        .new({}, {
+            prompt_title = "Open Page Component: " .. page.display_name,
+            finder = telescope.finders.new_table({
+                results = entries,
+                entry_maker = function(entry)
+                    return {
+                        value = entry,
+                        display = entry.label .. "  " .. entry.rust_relative,
+                        ordinal = entry.label .. " " .. entry.rust_relative,
+                    }
+                end,
+            }),
+            sorter = telescope.config.values.generic_sorter({}),
+            attach_mappings = function(prompt_bufnr)
+                telescope.actions.select_default:replace(function()
+                    local selection = telescope.action_state.get_selected_entry()
+                    telescope.actions.close(prompt_bufnr)
+
+                    if selection and selection.value then
+                        M.open_pair(selection.value)
+                    end
+                end)
+
+                return true
+            end,
+        })
+        :find()
+end
+
 --- Opens a Telescope picker for existing pages.
 ---
 function M.pick()
@@ -866,7 +1525,13 @@ function M.pick()
                     actions.close(prompt_bufnr)
 
                     if selection and selection.value then
-                        M.open_pair(selection.value)
+                        pick_page_entries(selection.value, paths, {
+                            actions = actions,
+                            action_state = action_state,
+                            finders = finders,
+                            pickers = pickers,
+                            config = telescope_config,
+                        })
                     end
                 end)
 
@@ -879,7 +1544,7 @@ end
 --- Prompts for a page route and creates a new page pair.
 ---
 function M.generate()
-    local paths = resolve_paths({ "pages_dir", "page_styles_dir", "app_path" })
+    local paths = resolve_paths({ "pages_dir", "page_styles_dir" })
     if not paths then
         return
     end
@@ -894,12 +1559,26 @@ function M.generate()
         return
     end
 
-    if not fs.exists(paths.app_path) then
-        notify_warn("App file not found: " .. paths.app_path)
-        return
-    end
+    vim.ui.select(
+        { "Create Page", "Create Page Component" },
+        { prompt = "What would you like to create?" },
+        function(choice)
+            if not choice then
+                return
+            end
 
-    prompt_create_page(paths)
+            if choice == "Create Page" then
+                if not fs.exists(paths.app_path) then
+                    notify_warn("App file not found: " .. paths.app_path)
+                    return
+                end
+
+                prompt_create_page(paths)
+            else
+                prompt_for_page_component_target(paths)
+            end
+        end
+    )
 end
 
 return M
