@@ -54,6 +54,8 @@ Project resolution checks both supported layouts:
 - `goggin-rs.touch` tracks changed files and formats touched Rust/SCSS files.
 - `goggin-rs.component` collects component/style pairs and generates new
   component Rust/SCSS files.
+- `goggin-rs.page` collects page/style pairs and generates new flat or
+  module-layout page Rust/SCSS files with app route insertion.
 
 ## Tests
 

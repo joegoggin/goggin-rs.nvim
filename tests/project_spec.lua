@@ -8,6 +8,7 @@ local repo_root = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p:h:
 package.path = repo_root .. "/lua/?.lua;" .. repo_root .. "/lua/?/init.lua;" .. package.path
 
 local component = require("goggin-rs.component")
+local page = require("goggin-rs.page")
 local plugin = require("goggin-rs")
 local fs = require("goggin-rs.fs")
 local naming = require("goggin-rs.naming")
@@ -1185,6 +1186,482 @@ test("component workflow aborts when target files already exist", function()
         }, "duplicate create should not rewrite the existing Rust file")
         assert_equals(fs.exists(scss_path), false, "duplicate create should not write the SCSS file")
         assert_equals(fs.exists(index_path), false, "duplicate create should not write style indexes")
+    end)
+end)
+
+--- Verifies page collection and paired SCSS resolution.
+---
+--- # Example Under Test
+---
+--- Page fixtures include flat root pages, nested flat pages, a module-layout
+--- page, a duplicate flat/module pair, and a page-like component under a
+--- `components` directory.
+---
+--- # Assertions
+---
+--- - `mod.rs` and page component files are ignored.
+--- - Direct, parent-prefixed, component-name, and module-layout SCSS partials resolve.
+--- - Module-layout pages win over duplicate flat page files for the same module.
+--- - Entries are sorted by display name and relative module path.
+---
+test("page workflow collects pages and resolves paired styles", function()
+    local root = path.join(temp_root, "page-collect")
+    create_default_layout(root)
+
+    local paths = {
+        pages_dir = path.join(root, "src", "pages"),
+        page_styles_dir = path.join(root, "styles", "pages"),
+    }
+
+    write_file(path.join(paths.pages_dir, "dashboard.rs"), {
+        "use leptos::prelude::*;",
+        "",
+        "#[component]",
+        "pub fn DashboardPage() -> impl IntoView {",
+        "    view! { <div></div> }",
+        "}",
+    })
+    write_file(path.join(paths.pages_dir, "admin", "settings.rs"), {
+        "#[component]",
+        '#[cfg(feature = "admin")]',
+        "",
+        "pub fn AdminSettingsPage() -> impl IntoView {",
+        "    view! { <div></div> }",
+        "}",
+    })
+    write_file(path.join(paths.pages_dir, "profile.rs"), {
+        "#[component]",
+        "pub fn UserProfilePage() -> impl IntoView {",
+        "    view! { <div></div> }",
+        "}",
+    })
+    write_file(path.join(paths.pages_dir, "reports.rs"), {
+        "#[component]",
+        "pub fn ReportsPage() -> impl IntoView {",
+        "    view! { <div></div> }",
+        "}",
+    })
+    write_file(path.join(paths.pages_dir, "reports", "page.rs"), {
+        "#[component]",
+        "pub fn ReportsPage() -> impl IntoView {",
+        "    view! { <div></div> }",
+        "}",
+    })
+    write_file(path.join(paths.pages_dir, "reports", "components", "ignored.rs"), {
+        "#[component]",
+        "pub fn IgnoredPage() -> impl IntoView {",
+        "    view! { <div></div> }",
+        "}",
+    })
+    write_file(path.join(paths.pages_dir, "helper.rs"), {
+        "pub fn helper() {}",
+    })
+    write_file(path.join(paths.page_styles_dir, "_dashboard.scss"), {
+        ".dashboard-page {",
+        "}",
+    })
+    write_file(path.join(paths.page_styles_dir, "admin", "_admin-settings.scss"), {
+        ".admin-settings-page {",
+        "}",
+    })
+    write_file(path.join(paths.page_styles_dir, "_user-profile-page.scss"), {
+        ".user-profile-page {",
+        "}",
+    })
+    write_file(path.join(paths.page_styles_dir, "reports", "_page.scss"), {
+        ".reports-page {",
+        "}",
+    })
+
+    local pages = page.collect(paths)
+
+    assert_equals(#pages, 4, "only top-level page Rust files should be collected")
+    assert_equals(pages[1].display_name, "AdminSettings", "nested page should sort first")
+    assert_equals(pages[1].rust_relative, "admin/settings.rs", "nested page relative path should be stored")
+    assert_equals(
+        pages[1].page_style_path,
+        path.join(paths.page_styles_dir, "admin", "_admin-settings.scss"),
+        "nested page should resolve parent-prefixed SCSS partial"
+    )
+    assert_equals(pages[2].display_name, "Dashboard", "root page should sort by display name")
+    assert_equals(
+        pages[2].page_style_path,
+        path.join(paths.page_styles_dir, "_dashboard.scss"),
+        "root page should resolve direct stem SCSS partial"
+    )
+    assert_equals(pages[3].display_name, "Reports", "module-layout page should be collected")
+    assert_equals(pages[3].is_module_layout, true, "module-layout page should win over duplicate flat page")
+    assert_equals(pages[3].rust_relative, "reports/page.rs", "module-layout page path should be stored")
+    assert_equals(
+        pages[3].page_style_path,
+        path.join(paths.page_styles_dir, "reports", "_page.scss"),
+        "module-layout page should resolve _page.scss"
+    )
+    assert_equals(pages[4].display_name, "UserProfile", "component-name style fallback page should sort last")
+    assert_equals(
+        pages[4].page_style_path,
+        path.join(paths.page_styles_dir, "_user-profile-page.scss"),
+        "page should resolve component-name SCSS partial"
+    )
+end)
+
+--- Verifies public and private page generation.
+---
+--- # Example Under Test
+---
+--- Public and private pages are generated into nested route fixture paths while
+--- the app file contains an initially empty `<Routes>` block.
+---
+--- # Assertions
+---
+--- - Rust and SCSS templates match the source-config output.
+--- - Page modules and exports are maintained for nested route segments.
+--- - Page style indexes forward through nested directories.
+--- - Public and private app routes are inserted with the expected path macros.
+--- - Touched files are formatted in first-seen order.
+---
+test("page workflow creates public and private page files routes and indexes", function()
+    with_stubbed_format(function(formatted)
+        local root = path.join(temp_root, "page-create-routes")
+        create_default_layout(root)
+
+        local paths = {
+            pages_dir = path.join(root, "src", "pages"),
+            page_styles_dir = path.join(root, "styles", "pages"),
+            app_path = path.join(root, "src", "app.rs"),
+        }
+
+        write_file(paths.app_path, {
+            "view! {",
+            "    <Router>",
+            "        <Routes>",
+            "        </Routes>",
+            "    </Router>",
+            "}",
+        })
+
+        local public_result = assert(page.create({
+            route = "/admin",
+            subroute = "User Settings",
+            page_name = "User Settings",
+            paths = paths,
+            format_opts = { timeout_ms = 30 },
+        }))
+
+        local private_result = assert(page.create({
+            route = "/auth/login",
+            private = true,
+            page_name = "Login",
+            paths = paths,
+            format_opts = { timeout_ms = 30 },
+        }))
+
+        local admin_rust_path = path.join(paths.pages_dir, "admin", "user_settings.rs")
+        local admin_scss_path = path.join(paths.page_styles_dir, "admin", "_user-settings.scss")
+        local auth_rust_path = path.join(paths.pages_dir, "auth", "login.rs")
+        local auth_scss_path = path.join(paths.page_styles_dir, "auth", "_login.scss")
+        local root_mod = path.join(paths.pages_dir, "mod.rs")
+        local admin_mod = path.join(paths.pages_dir, "admin", "mod.rs")
+        local auth_mod = path.join(paths.pages_dir, "auth", "mod.rs")
+        local root_index = path.join(paths.page_styles_dir, "index.scss")
+        local admin_index = path.join(paths.page_styles_dir, "admin", "index.scss")
+        local auth_index = path.join(paths.page_styles_dir, "auth", "index.scss")
+
+        assert_equals(public_result.route_path, "/admin/user-settings", "public route path should include sub-route")
+        assert_equals(public_result.rust_path, admin_rust_path, "public result should include rust path")
+        assert_equals(public_result.scss_path, admin_scss_path, "public result should include scss path")
+        assert_equals(private_result.route_path, "/auth/login", "private route path should be preserved")
+        assert_equals(private_result.private, true, "private result should record route visibility")
+
+        assert_list_equals(fs.read_lines(admin_rust_path), {
+            "use leptos::prelude::*;",
+            "",
+            "use crate::utils::class_name::ClassNameUtil;",
+            "",
+            "#[component]",
+            "pub fn UserSettingsPage() -> impl IntoView {",
+            "    // Classes",
+            '    let class_name = ClassNameUtil::new("user-settings-page", None);',
+            "    let user_settings_page = class_name.get_root_class();",
+            "",
+            "    view! {",
+            "        <div class=user_settings_page></div>",
+            "    }",
+            "}",
+        }, "public page Rust template should match expected output")
+        assert_list_equals(fs.read_lines(admin_scss_path), {
+            ".user-settings-page {",
+            "}",
+        }, "public page SCSS template should match expected output")
+        assert_list_equals(fs.read_lines(auth_rust_path), {
+            "use leptos::prelude::*;",
+            "",
+            "use crate::utils::class_name::ClassNameUtil;",
+            "",
+            "#[component]",
+            "pub fn LoginPage() -> impl IntoView {",
+            "    // Classes",
+            '    let class_name = ClassNameUtil::new("login-page", None);',
+            "    let login_page = class_name.get_root_class();",
+            "",
+            "    view! {",
+            "        <div class=login_page></div>",
+            "    }",
+            "}",
+        }, "private page Rust template should match expected output")
+        assert_list_equals(fs.read_lines(auth_scss_path), {
+            ".login-page {",
+            "}",
+        }, "private page SCSS template should match expected output")
+        assert_list_equals(fs.read_lines(root_mod), {
+            "pub mod admin;",
+            "pub mod auth;",
+            "",
+            "pub use admin::user_settings::UserSettingsPage;",
+            "pub use auth::login::LoginPage;",
+        }, "root pages mod.rs should declare route groups and export pages")
+        assert_list_equals(fs.read_lines(admin_mod), {
+            "pub mod user_settings;",
+        }, "admin mod should declare generated leaf page")
+        assert_list_equals(fs.read_lines(auth_mod), {
+            "pub mod login;",
+        }, "auth mod should declare generated leaf page")
+        assert_list_equals(fs.read_lines(root_index), {
+            '@forward "admin";',
+            '@forward "auth";',
+        }, "root page style index should forward route groups")
+        assert_list_equals(fs.read_lines(admin_index), {
+            '@forward "user-settings";',
+        }, "admin style index should forward the generated public page")
+        assert_list_equals(fs.read_lines(auth_index), {
+            '@forward "login";',
+        }, "auth style index should forward the generated private page")
+        assert_list_equals(fs.read_lines(paths.app_path), {
+            "view! {",
+            "    <Router>",
+            "        <Routes>",
+            "",
+            "                    // Admin",
+            '                    <Route path=path!("/admin/user-settings") view=UserSettingsPage />',
+            "",
+            "                    // Auth routes",
+            '                    <PrivateRoute path=path!("auth/login") view=LoginPage />',
+            "        </Routes>",
+            "    </Router>",
+            "}",
+        }, "app routes should include public and private generated pages")
+        assert_list_equals(public_result.touched_paths, {
+            admin_rust_path,
+            admin_scss_path,
+            root_mod,
+            admin_mod,
+            root_index,
+            admin_index,
+            paths.app_path,
+        }, "public create should return touched files in mutation order")
+        assert_list_equals(private_result.touched_paths, {
+            auth_rust_path,
+            auth_scss_path,
+            root_mod,
+            auth_mod,
+            root_index,
+            auth_index,
+            paths.app_path,
+        }, "private create should return touched files in mutation order")
+        assert_list_equals(formatted, {
+            admin_rust_path .. ":30",
+            admin_scss_path .. ":30",
+            root_mod .. ":30",
+            admin_mod .. ":30",
+            root_index .. ":30",
+            admin_index .. ":30",
+            paths.app_path .. ":30",
+            auth_rust_path .. ":30",
+            auth_scss_path .. ":30",
+            root_mod .. ":30",
+            auth_mod .. ":30",
+            root_index .. ":30",
+            auth_index .. ":30",
+            paths.app_path .. ":30",
+        }, "page create should format touched Rust and SCSS files")
+    end)
+end)
+
+--- Verifies module-layout page generation.
+---
+--- # Example Under Test
+---
+--- A nested page is generated directly as a module-layout page with `page.rs`,
+--- a page `mod.rs`, and `_page.scss`.
+---
+--- # Assertions
+---
+--- - The generated Rust and SCSS files use module-layout paths.
+--- - The page module re-exports `page::SummaryPage`.
+--- - Parent modules and SCSS indexes point through the route directory chain.
+--- - The app route still points at the generated page component.
+---
+test("page workflow creates module-layout page files and indexes", function()
+    with_stubbed_format(function()
+        local root = path.join(temp_root, "page-create-module-layout")
+        create_default_layout(root)
+
+        local paths = {
+            pages_dir = path.join(root, "src", "pages"),
+            page_styles_dir = path.join(root, "styles", "pages"),
+            app_path = path.join(root, "src", "app.rs"),
+        }
+
+        write_file(paths.app_path, {
+            "view! {",
+            "    <Router>",
+            "        <Routes>",
+            "        </Routes>",
+            "    </Router>",
+            "}",
+        })
+
+        local result = assert(page.create({
+            route = "/reports/summary",
+            page_name = "Summary",
+            module_layout = true,
+            paths = paths,
+            format_opts = { timeout_ms = 40 },
+        }))
+
+        local rust_path = path.join(paths.pages_dir, "reports", "summary", "page.rs")
+        local scss_path = path.join(paths.page_styles_dir, "reports", "summary", "_page.scss")
+        local root_mod = path.join(paths.pages_dir, "mod.rs")
+        local reports_mod = path.join(paths.pages_dir, "reports", "mod.rs")
+        local summary_mod = path.join(paths.pages_dir, "reports", "summary", "mod.rs")
+        local root_index = path.join(paths.page_styles_dir, "index.scss")
+        local reports_index = path.join(paths.page_styles_dir, "reports", "index.scss")
+        local summary_index = path.join(paths.page_styles_dir, "reports", "summary", "index.scss")
+
+        assert_equals(result.is_module_layout, true, "result should record module-layout generation")
+        assert_equals(result.rust_path, rust_path, "module-layout result should include page.rs path")
+        assert_equals(result.scss_path, scss_path, "module-layout result should include _page.scss path")
+        assert_list_equals(fs.read_lines(rust_path), {
+            "use leptos::prelude::*;",
+            "",
+            "use crate::utils::class_name::ClassNameUtil;",
+            "",
+            "#[component]",
+            "pub fn SummaryPage() -> impl IntoView {",
+            "    // Classes",
+            '    let class_name = ClassNameUtil::new("summary-page", None);',
+            "    let summary_page = class_name.get_root_class();",
+            "",
+            "    view! {",
+            "        <div class=summary_page></div>",
+            "    }",
+            "}",
+        }, "module-layout page Rust template should match expected output")
+        assert_list_equals(fs.read_lines(scss_path), {
+            ".summary-page {",
+            "}",
+        }, "module-layout page SCSS template should match expected output")
+        assert_list_equals(fs.read_lines(root_mod), {
+            "pub mod reports;",
+            "",
+            "pub use reports::summary::SummaryPage;",
+        }, "root pages mod.rs should export the module-layout page")
+        assert_list_equals(fs.read_lines(reports_mod), {
+            "pub mod summary;",
+        }, "parent mod should declare the module-layout leaf")
+        assert_list_equals(fs.read_lines(summary_mod), {
+            "pub mod page;",
+            "",
+            "pub use page::SummaryPage;",
+        }, "module-layout page mod should re-export the page component")
+        assert_list_equals(fs.read_lines(root_index), {
+            '@forward "reports";',
+        }, "root style index should forward the parent route group")
+        assert_list_equals(fs.read_lines(reports_index), {
+            '@forward "summary";',
+        }, "parent style index should forward the module-layout page directory")
+        assert_list_equals(fs.read_lines(summary_index), {
+            '@forward "page";',
+        }, "module-layout style index should forward _page.scss")
+        assert_list_equals(fs.read_lines(paths.app_path), {
+            "view! {",
+            "    <Router>",
+            "        <Routes>",
+            "",
+            "                    // Reports",
+            '                    <Route path=path!("/reports/summary") view=SummaryPage />',
+            "        </Routes>",
+            "    </Router>",
+            "}",
+        }, "app routes should include the module-layout page")
+        assert_list_equals(result.touched_paths, {
+            rust_path,
+            scss_path,
+            root_mod,
+            reports_mod,
+            summary_mod,
+            root_index,
+            reports_index,
+            summary_index,
+            paths.app_path,
+        }, "module-layout create should return touched files in mutation order")
+    end)
+end)
+
+--- Verifies page generation aborts before writing nested pages under flat pages.
+---
+--- # Example Under Test
+---
+--- A flat parent page already exists when a nested child route is requested.
+---
+--- # Assertions
+---
+--- - Creation returns nil and a flat-parent warning.
+--- - No nested Rust, SCSS, or app route changes are written.
+---
+test("page workflow aborts when nesting under a flat page", function()
+    with_stubbed_format(function()
+        local root = path.join(temp_root, "page-create-flat-parent")
+        create_default_layout(root)
+
+        local paths = {
+            pages_dir = path.join(root, "src", "pages"),
+            page_styles_dir = path.join(root, "styles", "pages"),
+            app_path = path.join(root, "src", "app.rs"),
+        }
+
+        write_file(path.join(paths.pages_dir, "admin.rs"), { "existing" })
+        write_file(paths.app_path, {
+            "view! {",
+            "    <Routes>",
+            "    </Routes>",
+            "}",
+        })
+
+        local result, err = page.create({
+            route = "/admin/settings",
+            page_name = "Settings",
+            paths = paths,
+        })
+
+        assert_equals(result, nil, "flat parent should abort creation")
+        assert_match(err, "Cannot create nested page under flat page:", "flat-parent error should explain conflict")
+        assert_equals(
+            fs.exists(path.join(paths.pages_dir, "admin", "settings.rs")),
+            false,
+            "nested Rust page should not be written"
+        )
+        assert_equals(
+            fs.exists(path.join(paths.page_styles_dir, "admin", "_settings.scss")),
+            false,
+            "nested SCSS page should not be written"
+        )
+        assert_list_equals(fs.read_lines(paths.app_path), {
+            "view! {",
+            "    <Routes>",
+            "    </Routes>",
+            "}",
+        }, "app routes should remain unchanged")
     end)
 end)
 
