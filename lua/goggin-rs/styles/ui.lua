@@ -56,7 +56,7 @@ end
 ---@param prompt_title string Picker title.
 ---@param items table[] Style items.
 ---@param telescope table Telescope dependencies.
----@param on_select fun(item: table)
+---@param on_select fun(item:table) Callback invoked with the selected style item.
 ---
 local function pick_items(prompt_title, items, telescope, on_select)
     telescope.pickers

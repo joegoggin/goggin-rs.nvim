@@ -48,7 +48,6 @@ end
 ---@param start_dir string Directory where pruning starts.
 ---@param root_dir string Boundary directory that is never deleted.
 ---@param opts table|nil Pruning options.
----@return nil
 ---
 function M.empty_dirs(start_dir, root_dir, opts)
     local options = opts or {}

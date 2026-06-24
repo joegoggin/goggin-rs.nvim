@@ -41,7 +41,7 @@ end
 --- Prompts for an existing or new page subdirectory.
 ---
 ---@param paths table Resolved project paths.
----@param on_select fun(relative_dir: string)
+---@param on_select fun(relative_dir:string) Callback invoked with the selected relative directory.
 ---
 local function choose_page_subdirectory(paths, on_select)
     local options = collect_page_subdirectories(paths)
@@ -75,7 +75,7 @@ end
 --- Prompts for an existing or new page-local component subdirectory.
 ---
 ---@param page table Page entry from `collect`.
----@param on_select fun(relative_dir: string)
+---@param on_select fun(relative_dir:string) Callback invoked with the selected relative directory.
 ---
 local function choose_page_component_subdirectory(page, on_select)
     local base_dir = path.join(page.page_dir, "components")

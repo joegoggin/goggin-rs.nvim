@@ -247,6 +247,17 @@ end)
 --- Verifies component generation rejects subdirectories that would create
 --- invalid Rust module names.
 ---
+--- # Example Under Test
+---
+--- Component creation is attempted for `Report Card` under the relative
+--- directory `2024/Reports`.
+---
+--- # Assertions
+---
+--- - Numeric component subdirectories abort creation.
+--- - The warning explains that the subdirectory cannot start with a number.
+--- - No invalid component directory is written.
+---
 test("component workflow rejects numeric-leading subdirectories", function()
     with_stubbed_format(function()
         local root = path.join(temp_root, "component-create-invalid-subdir")

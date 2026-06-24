@@ -7,6 +7,9 @@ local M = {}
 
 ---@type table
 local defaults = {
+    commands = {
+        enabled = true,
+    },
     paths = {
         components_dir = "src/components",
         styles_components_dir = "styles/components",

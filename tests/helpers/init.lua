@@ -154,7 +154,7 @@ end
 
 --- Runs a function while stubbing touched-file formatting.
 ---
----@param fn fun(formatted: string[])
+---@param fn fun(formatted:string[]) Callback receiving formatted path records.
 ---
 function H.with_stubbed_format(fn)
     local original_format_file = H.touch.format_file
