@@ -4,53 +4,9 @@
 --- generator entrypoints while keeping callbacks lazy so tests and users can
 --- replace modules before commands are invoked.
 
-local M = {}
+local workflows = require("goggin-rs.workflows")
 
----@type table[]
-local COMMANDS = {
-    {
-        name = "GogginRsPickComponent",
-        desc = "Pick and open a Rust component",
-        module = "goggin-rs.components",
-        action = "pick",
-    },
-    {
-        name = "GogginRsGenerateComponent",
-        desc = "Generate a Rust component and paired style",
-        module = "goggin-rs.components",
-        action = "generate",
-    },
-    {
-        name = "GogginRsPickPage",
-        desc = "Pick and open a Rust page",
-        module = "goggin-rs.pages",
-        action = "pick",
-    },
-    {
-        name = "GogginRsGeneratePage",
-        desc = "Generate a Rust page or page-local component",
-        module = "goggin-rs.pages",
-        action = "generate",
-    },
-    {
-        name = "GogginRsAddStyle",
-        desc = "Add a missing component or page style",
-        module = "goggin-rs.styles",
-        action = "pick",
-    },
-    {
-        name = "GogginRsDeleteStyle",
-        desc = "Delete an existing component or page style",
-        module = "goggin-rs.styles",
-        action = "pick_delete",
-    },
-    {
-        name = "GogginRsPickColors",
-        desc = "Pick and copy an SCSS color variable",
-        module = "goggin-rs.scss",
-        action = "pick_colors",
-    },
-}
+local M = {}
 
 ---@type table<string, boolean>
 local registered = {}
@@ -69,22 +25,22 @@ end
 
 --- Registers all public plugin workflow commands.
 function M.register()
-    for _, command in ipairs(COMMANDS) do
-        vim.api.nvim_create_user_command(command.name, command_callback(command.module, command.action), {
-            desc = command.desc,
+    for _, workflow in ipairs(workflows.all()) do
+        vim.api.nvim_create_user_command(workflow.command_name, command_callback(workflow.module, workflow.action), {
+            desc = workflow.desc,
             force = true,
         })
 
-        registered[command.name] = true
+        registered[workflow.command_name] = true
     end
 end
 
 --- Removes plugin commands registered by this module.
 function M.unregister()
-    for _, command in ipairs(COMMANDS) do
-        if registered[command.name] then
-            pcall(vim.api.nvim_del_user_command, command.name)
-            registered[command.name] = nil
+    for _, workflow in ipairs(workflows.all()) do
+        if registered[workflow.command_name] then
+            pcall(vim.api.nvim_del_user_command, workflow.command_name)
+            registered[workflow.command_name] = nil
         end
     end
 end
@@ -96,8 +52,8 @@ end
 function M.names()
     local names = {}
 
-    for _, command in ipairs(COMMANDS) do
-        table.insert(names, command.name)
+    for _, workflow in ipairs(workflows.all()) do
+        table.insert(names, workflow.command_name)
     end
 
     return names

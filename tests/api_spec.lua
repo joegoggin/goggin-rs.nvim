@@ -13,25 +13,109 @@ local plugin = h.plugin
 
 local telescope_extension_module = "telescope._extensions.goggin-rs"
 
-local command_names = {
-    "GogginRsPickComponent",
-    "GogginRsGenerateComponent",
-    "GogginRsPickPage",
-    "GogginRsGeneratePage",
-    "GogginRsAddStyle",
-    "GogginRsDeleteStyle",
-    "GogginRsPickColors",
+local workflow_cases = {
+    {
+        command = "GogginRsPickComponent",
+        picker = "pick_component",
+        module = "goggin-rs.components",
+        action = "pick",
+        marker = "components.pick",
+    },
+    {
+        command = "GogginRsGenerateComponent",
+        picker = "generate_component",
+        module = "goggin-rs.components",
+        action = "generate",
+        marker = "components.generate",
+    },
+    {
+        command = "GogginRsPickPage",
+        picker = "pick_page",
+        module = "goggin-rs.pages",
+        action = "pick",
+        marker = "pages.pick",
+    },
+    {
+        command = "GogginRsGeneratePage",
+        picker = "generate_page",
+        module = "goggin-rs.pages",
+        action = "generate",
+        marker = "pages.generate",
+    },
+    {
+        command = "GogginRsAddStyle",
+        picker = "add_style",
+        module = "goggin-rs.styles",
+        action = "pick",
+        marker = "styles.pick",
+    },
+    {
+        command = "GogginRsDeleteStyle",
+        picker = "delete_style",
+        module = "goggin-rs.styles",
+        action = "pick_delete",
+        marker = "styles.pick_delete",
+    },
+    {
+        command = "GogginRsPickColors",
+        picker = "pick_colors",
+        module = "goggin-rs.scss",
+        action = "pick_colors",
+        marker = "scss.pick_colors",
+    },
 }
 
-local telescope_picker_names = {
-    "pick_component",
-    "generate_component",
-    "pick_page",
-    "generate_page",
-    "add_style",
-    "delete_style",
-    "pick_colors",
-}
+--- Returns a named field from each workflow case in order.
+---
+---@param field string Workflow case field name.
+---@return any[] values Ordered field values.
+---
+local function case_values(field)
+    local values = {}
+
+    for _, case in ipairs(workflow_cases) do
+        table.insert(values, case[field])
+    end
+
+    return values
+end
+
+--- Runs a callback with workflow actions replaced by recording stubs.
+---
+---@param fn fun(called:string[]) Callback receiving recorded workflow markers.
+---
+local function with_stubbed_workflow_actions(fn)
+    local modules = {
+        ["goggin-rs.components"] = require("goggin-rs.components"),
+        ["goggin-rs.pages"] = require("goggin-rs.pages"),
+        ["goggin-rs.styles"] = require("goggin-rs.styles"),
+        ["goggin-rs.scss"] = require("goggin-rs.scss"),
+    }
+    local originals = {}
+    local called = {}
+
+    for _, case in ipairs(workflow_cases) do
+        local target = modules[case.module]
+        local marker = case.marker
+
+        originals[marker] = target[case.action]
+        rawset(target, case.action, function()
+            table.insert(called, marker)
+        end)
+    end
+
+    local ok, err = xpcall(function()
+        fn(called)
+    end, debug.traceback)
+
+    for _, case in ipairs(workflow_cases) do
+        rawset(modules[case.module], case.action, originals[case.marker])
+    end
+
+    if not ok then
+        error(err, 2)
+    end
+end
 
 --- Checks whether a user command is currently registered.
 ---
@@ -149,7 +233,7 @@ end)
 test("setup registers workflow commands idempotently and supports disabling them", function()
     plugin.setup({ commands = { enabled = false } })
 
-    for _, name in ipairs(command_names) do
+    for _, name in ipairs(case_values("command")) do
         assert_equals(command_exists(name), false, name .. " should start disabled")
     end
 
@@ -167,19 +251,19 @@ test("setup registers workflow commands idempotently and supports disabling them
     )
     assert_equals(plugin.config().paths.pages_dir, "src/pages", "path defaults should remain merged")
 
-    for _, name in ipairs(command_names) do
+    for _, name in ipairs(case_values("command")) do
         assert_equals(command_exists(name), true, name .. " should be registered")
     end
 
     plugin.setup({})
 
-    for _, name in ipairs(command_names) do
+    for _, name in ipairs(case_values("command")) do
         assert_equals(command_exists(name), true, name .. " should remain registered after repeated setup")
     end
 
     plugin.setup({ commands = { enabled = false } })
 
-    for _, name in ipairs(command_names) do
+    for _, name in ipairs(case_values("command")) do
         assert_equals(command_exists(name), false, name .. " should be removed when commands are disabled")
     end
 
@@ -199,86 +283,15 @@ end)
 --- - Command dispatch preserves the command order exercised by the test.
 ---
 test("workflow commands dispatch to extracted module entrypoints", function()
-    local modules = {
-        ["goggin-rs.components"] = require("goggin-rs.components"),
-        ["goggin-rs.pages"] = require("goggin-rs.pages"),
-        ["goggin-rs.styles"] = require("goggin-rs.styles"),
-        ["goggin-rs.scss"] = require("goggin-rs.scss"),
-    }
-
-    local cases = {
-        {
-            command = "GogginRsPickComponent",
-            module = "goggin-rs.components",
-            action = "pick",
-            marker = "components.pick",
-        },
-        {
-            command = "GogginRsGenerateComponent",
-            module = "goggin-rs.components",
-            action = "generate",
-            marker = "components.generate",
-        },
-        { command = "GogginRsPickPage", module = "goggin-rs.pages", action = "pick", marker = "pages.pick" },
-        {
-            command = "GogginRsGeneratePage",
-            module = "goggin-rs.pages",
-            action = "generate",
-            marker = "pages.generate",
-        },
-        { command = "GogginRsAddStyle", module = "goggin-rs.styles", action = "pick", marker = "styles.pick" },
-        {
-            command = "GogginRsDeleteStyle",
-            module = "goggin-rs.styles",
-            action = "pick_delete",
-            marker = "styles.pick_delete",
-        },
-        {
-            command = "GogginRsPickColors",
-            module = "goggin-rs.scss",
-            action = "pick_colors",
-            marker = "scss.pick_colors",
-        },
-    }
-
-    local originals = {}
-    local called = {}
-
-    for _, case in ipairs(cases) do
-        local target = modules[case.module]
-        local marker = case.marker
-
-        originals[marker] = target[case.action]
-        rawset(target, case.action, function()
-            table.insert(called, marker)
-        end)
-    end
-
-    local ok, err = xpcall(function()
+    with_stubbed_workflow_actions(function(called)
         plugin.setup({})
 
-        for _, case in ipairs(cases) do
+        for _, case in ipairs(workflow_cases) do
             vim.cmd(case.command)
         end
-    end, debug.traceback)
 
-    for _, case in ipairs(cases) do
-        rawset(modules[case.module], case.action, originals[case.marker])
-    end
-
-    if not ok then
-        error(err, 2)
-    end
-
-    assert_list_equals(called, {
-        "components.pick",
-        "components.generate",
-        "pages.pick",
-        "pages.generate",
-        "styles.pick",
-        "styles.pick_delete",
-        "scss.pick_colors",
-    }, "commands should invoke their workflow callbacks")
+        assert_list_equals(called, case_values("marker"), "commands should invoke their workflow callbacks")
+    end)
 end)
 
 --- Verifies the Telescope extension exports workflow picker names.
@@ -297,7 +310,7 @@ test("telescope extension exports workflow picker names", function()
     with_telescope_extension_stub(function(extension)
         assert_equals(type(extension.exports), "table", "extension should register exports")
 
-        for _, picker_name in ipairs(telescope_picker_names) do
+        for _, picker_name in ipairs(case_values("picker")) do
             assert_equals(type(extension.exports[picker_name]), "function", picker_name .. " should be exported")
         end
     end)
@@ -316,70 +329,14 @@ end)
 --- - Export dispatch preserves the picker order exercised by the test.
 ---
 test("telescope extension dispatches lazily to workflow entrypoints", function()
-    local modules = {
-        ["goggin-rs.components"] = require("goggin-rs.components"),
-        ["goggin-rs.pages"] = require("goggin-rs.pages"),
-        ["goggin-rs.styles"] = require("goggin-rs.styles"),
-        ["goggin-rs.scss"] = require("goggin-rs.scss"),
-    }
-
-    local cases = {
-        { picker = "pick_component", module = "goggin-rs.components", action = "pick", marker = "components.pick" },
-        {
-            picker = "generate_component",
-            module = "goggin-rs.components",
-            action = "generate",
-            marker = "components.generate",
-        },
-        { picker = "pick_page", module = "goggin-rs.pages", action = "pick", marker = "pages.pick" },
-        { picker = "generate_page", module = "goggin-rs.pages", action = "generate", marker = "pages.generate" },
-        { picker = "add_style", module = "goggin-rs.styles", action = "pick", marker = "styles.pick" },
-        {
-            picker = "delete_style",
-            module = "goggin-rs.styles",
-            action = "pick_delete",
-            marker = "styles.pick_delete",
-        },
-        { picker = "pick_colors", module = "goggin-rs.scss", action = "pick_colors", marker = "scss.pick_colors" },
-    }
-
     with_telescope_extension_stub(function(extension)
-        local originals = {}
-        local called = {}
-
-        for _, case in ipairs(cases) do
-            local target = modules[case.module]
-            local marker = case.marker
-
-            originals[marker] = target[case.action]
-            rawset(target, case.action, function()
-                table.insert(called, marker)
-            end)
-        end
-
-        local ok, err = xpcall(function()
-            for _, case in ipairs(cases) do
+        with_stubbed_workflow_actions(function(called)
+            for _, case in ipairs(workflow_cases) do
                 extension.exports[case.picker]()
             end
-        end, debug.traceback)
 
-        for _, case in ipairs(cases) do
-            rawset(modules[case.module], case.action, originals[case.marker])
-        end
-
-        if not ok then
-            error(err, 2)
-        end
-
-        assert_list_equals(called, {
-            "components.pick",
-            "components.generate",
-            "pages.pick",
-            "pages.generate",
-            "styles.pick",
-            "styles.pick_delete",
-            "scss.pick_colors",
-        }, "extension exports should invoke workflow callbacks")
+            assert_list_equals(called, case_values("marker"), "extension exports should invoke workflow callbacks")
+        end)
     end)
 end)
 

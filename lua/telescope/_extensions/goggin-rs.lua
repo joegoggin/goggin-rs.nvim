@@ -3,6 +3,8 @@
 --- Exposes the plugin's user-facing picker and generator workflows through
 --- `require("telescope").load_extension("goggin-rs")`.
 
+local workflows = require("goggin-rs.workflows")
+
 local ok_telescope, telescope = pcall(require, "telescope")
 
 if not ok_telescope or type(telescope.register_extension) ~= "function" then
@@ -21,14 +23,12 @@ local function workflow_export(module_name, action_name)
     end
 end
 
+local exports = {}
+
+for _, workflow in ipairs(workflows.all()) do
+    exports[workflow.telescope_name] = workflow_export(workflow.module, workflow.action)
+end
+
 return telescope.register_extension({
-    exports = {
-        pick_component = workflow_export("goggin-rs.components", "pick"),
-        generate_component = workflow_export("goggin-rs.components", "generate"),
-        pick_page = workflow_export("goggin-rs.pages", "pick"),
-        generate_page = workflow_export("goggin-rs.pages", "generate"),
-        add_style = workflow_export("goggin-rs.styles", "pick"),
-        delete_style = workflow_export("goggin-rs.styles", "pick_delete"),
-        pick_colors = workflow_export("goggin-rs.scss", "pick_colors"),
-    },
+    exports = exports,
 })
