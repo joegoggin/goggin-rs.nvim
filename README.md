@@ -55,6 +55,8 @@ Project resolution checks both supported layouts:
   component Rust/SCSS files.
 - `goggin-rs.pages` collects page/style pairs and generates new flat or
   module-layout page Rust/SCSS files with app route insertion.
+- `goggin-rs.styles` collects missing or existing style targets and provides
+  add/delete workflows for component, page, and page-local component styles.
 
 Most package directories also contain focused implementation modules. Prefer
 the package `init.lua` modules above unless a workflow needs a narrower helper.

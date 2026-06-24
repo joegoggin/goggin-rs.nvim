@@ -25,6 +25,7 @@ H.path = require("goggin-rs.infra.path")
 H.project = require("goggin-rs.project")
 H.rust = require("goggin-rs.rust")
 H.scss = require("goggin-rs.scss")
+H.styles = require("goggin-rs.styles")
 H.touch = require("goggin-rs.infra.touch")
 
 H.temp_root = vim.fn.tempname()
