@@ -50,7 +50,8 @@ Project resolution checks both supported layouts:
   and Telescope-loading helpers.
 - `goggin-rs.rust` updates Rust module declarations, exports, Leptos routes,
   and empty module directories.
-- `goggin-rs.scss` updates SCSS `@forward` indexes and style directory chains.
+- `goggin-rs.scss` updates SCSS `@forward` indexes, style directory chains,
+  and color variable discovery/parsing.
 - `goggin-rs.components` collects component/style pairs and generates new
   component Rust/SCSS files.
 - `goggin-rs.pages` collects page/style pairs and generates new flat or
