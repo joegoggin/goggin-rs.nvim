@@ -120,13 +120,13 @@ end
 ---@return string|nil resolved Resolved display value.
 ---
 local function parse_hex_color(value)
-    local long = value:match("^%s*(#%x%x%x%x%x%x)%x?%x?%s*$")
-    if long then
+    local long, long_alpha = value:match("^%s*(#%x%x%x%x%x%x)(%x*)%s*$")
+    if long and (long_alpha == "" or #long_alpha == 2) then
         return long:lower(), long:lower()
     end
 
-    local r, g, b = value:match("^%s*#(%x)(%x)(%x)%x?%s*$")
-    if r and g and b then
+    local r, g, b, short_alpha = value:match("^%s*#(%x)(%x)(%x)(%x*)%s*$")
+    if r and g and b and (short_alpha == "" or #short_alpha == 1) then
         local hex = "#" .. r .. r .. g .. g .. b .. b
         return hex:lower(), hex:lower()
     end

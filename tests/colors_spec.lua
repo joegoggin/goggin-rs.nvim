@@ -171,5 +171,7 @@ test("scss color normalization supports hex rgb rgba hsl and hsla values", funct
     assert_equals(unresolved.hex, nil, "unresolved css variables should not invent a preview hex")
     assert_equals(unresolved.resolved_value, nil, "unresolved css variables should not invent a display value")
 
+    assert_equals(scss.normalize_color_value("#12345"), nil, "invalid 5-digit hex values should be ignored")
+    assert_equals(scss.normalize_color_value("#1234567"), nil, "invalid 7-digit hex values should be ignored")
     assert_equals(scss.normalize_color_value("1rem"), nil, "non-color values should be ignored")
 end)

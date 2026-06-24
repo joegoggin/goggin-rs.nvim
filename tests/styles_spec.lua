@@ -80,6 +80,12 @@ test("style workflow collects missing and existing styles", function()
         "    view! { <div /> }",
         "}",
     })
+    write_file(path.join(paths.pages_dir, "admin", "dashboard.rs"), {
+        "#[component]",
+        "pub fn AdminDashboardPage() -> impl IntoView {",
+        "    view! { <div /> }",
+        "}",
+    })
     write_file(path.join(paths.pages_dir, "reports", "page.rs"), {
         "#[component]",
         "pub fn ReportsPage() -> impl IntoView {",
@@ -106,6 +112,10 @@ test("style workflow collects missing and existing styles", function()
     })
     write_file(path.join(paths.page_styles_dir, "reports", "_page.scss"), {
         ".reports-page {",
+        "}",
+    })
+    write_file(path.join(paths.page_styles_dir, "admin", "_admin-dashboard.scss"), {
+        ".admin-dashboard-page {",
         "}",
     })
     write_file(path.join(paths.page_styles_dir, "reports", "components", "panels", "_panels-list.scss"), {
@@ -146,11 +156,22 @@ test("style workflow collects missing and existing styles", function()
     assert_equals(missing[3].style_target, "user-profile-card", "component target should use prefixed style")
 
     local existing = styles.collect({ paths = paths, include_existing = true })
-    assert_equals(#existing, 2, "existing collection should include only items with styles")
-    assert_equals(existing[1].component_name, "ReportsPage", "existing page should sort first")
-    assert_equals(existing[1].scss_path, path.join(paths.page_styles_dir, "reports", "_page.scss"))
-    assert_equals(existing[2].component_name, "NavBar", "existing component should sort after pages")
-    assert_equals(existing[2].class_name, "nav-shell", "existing ClassNameUtil class should be preserved")
+    assert_equals(#existing, 3, "existing collection should include only items with styles")
+    assert_equals(
+        existing[1].component_name,
+        "AdminDashboardPage",
+        "existing fallback-named flat page should sort first"
+    )
+    assert_equals(existing[1].scss_path, path.join(paths.page_styles_dir, "admin", "_admin-dashboard.scss"))
+    assert_equals(
+        existing[1].style_target,
+        "admin-dashboard",
+        "existing fallback style should use its real forward target"
+    )
+    assert_equals(existing[2].component_name, "ReportsPage", "existing module page should sort after flat page")
+    assert_equals(existing[2].scss_path, path.join(paths.page_styles_dir, "reports", "_page.scss"))
+    assert_equals(existing[3].component_name, "NavBar", "existing component should sort after pages")
+    assert_equals(existing[3].class_name, "nav-shell", "existing ClassNameUtil class should be preserved")
 end)
 
 --- Verifies missing style creation.
@@ -185,6 +206,7 @@ test("style workflow creates missing style and inserts Rust class setup", functi
         local style_index = path.join(paths.styles_components_dir, "user", "index.scss")
         write_file(rust_path, {
             "use leptos::prelude::*;",
+            '// ClassNameUtil::new("legacy-profile", None);',
             "",
             "#[component]",
             "pub fn ProfileCard(",
@@ -218,6 +240,7 @@ test("style workflow creates missing style and inserts Rust class setup", functi
         assert_list_equals(fs.read_lines(rust_path), {
             "use leptos::prelude::*;",
             "use crate::utils::class_name::ClassNameUtil;",
+            '// ClassNameUtil::new("legacy-profile", None);',
             "",
             "#[component]",
             "pub fn ProfileCard(",

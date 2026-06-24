@@ -7,6 +7,7 @@ local fs = require("goggin-rs.infra.fs")
 local naming = require("goggin-rs.naming")
 local path = require("goggin-rs.infra.path")
 local pages = require("goggin-rs.pages.collect")
+local page_styles = require("goggin-rs.pages.styles")
 local rust = require("goggin-rs.rust")
 
 local M = {}
@@ -58,6 +59,17 @@ local function parent_segments(segments)
     end
 
     return parents
+end
+
+--- Builds style directory segments from an existing SCSS partial path.
+---
+---@param style_root string Style root directory.
+---@param scss_path string SCSS partial path.
+---@return string[] segments Style directory segments.
+---
+local function style_segments_from_path(style_root, scss_path)
+    local style_dir = vim.fn.fnamemodify(scss_path, ":h")
+    return naming.split_path_segments(path.relative(style_root, style_dir))
 end
 
 --- Reads forwarded targets from an SCSS index.
@@ -286,6 +298,16 @@ end
 ---
 local function resolve_page_style_plan(page, paths)
     local module_segments = naming.split_path_segments(page.module_relative_dir)
+    local existing_scss_path = page.scss_path or page.page_style_path
+
+    if existing_scss_path and fs.exists(existing_scss_path) then
+        return {
+            exists = true,
+            path = existing_scss_path,
+            target = page_styles.style_forward_target_from_path(existing_scss_path),
+            segments = style_segments_from_path(paths.page_styles_dir, existing_scss_path),
+        }
+    end
 
     if page.is_module_layout then
         local style_dir = join_segments(paths.page_styles_dir, module_segments)

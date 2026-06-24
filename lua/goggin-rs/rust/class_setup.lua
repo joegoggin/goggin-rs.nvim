@@ -26,6 +26,15 @@ local CLASS_NAME_UTIL_CALLS = {
     },
 }
 
+--- Checks whether a Rust source line is a plain line comment.
+---
+---@param line string Rust source line.
+---@return boolean is_comment Whether the line is a comment.
+---
+local function is_line_comment(line)
+    return line:match("^%s*//") ~= nil
+end
+
 --- Extracts an existing `ClassNameUtil` class from a Rust source file.
 ---
 ---@param file_path string Rust file path.
@@ -33,11 +42,13 @@ local CLASS_NAME_UTIL_CALLS = {
 ---
 function M.extract_existing_class_name(file_path)
     for _, line in ipairs(fs.read_lines(file_path)) do
-        for _, call in ipairs(CLASS_NAME_UTIL_CALLS) do
-            local captures = { line:match(call.extract_pattern) }
-            local class_name = captures[call.class_capture]
-            if class_name then
-                return class_name
+        if not is_line_comment(line) then
+            for _, call in ipairs(CLASS_NAME_UTIL_CALLS) do
+                local captures = { line:match(call.extract_pattern) }
+                local class_name = captures[call.class_capture]
+                if class_name then
+                    return class_name
+                end
             end
         end
     end
@@ -52,9 +63,11 @@ end
 ---
 function M.has_class_setup(lines)
     for _, line in ipairs(lines) do
-        for _, call in ipairs(CLASS_NAME_UTIL_CALLS) do
-            if line:find(call.contains, 1, true) then
-                return true
+        if not is_line_comment(line) then
+            for _, call in ipairs(CLASS_NAME_UTIL_CALLS) do
+                if line:find(call.contains, 1, true) then
+                    return true
+                end
             end
         end
     end
@@ -69,7 +82,7 @@ end
 ---
 function M.ensure_class_name_import(lines)
     for _, line in ipairs(lines) do
-        if line:find("ClassNameUtil", 1, true) then
+        if line:match("^%s*use%s+") and line:find("ClassNameUtil", 1, true) then
             return false
         end
     end
