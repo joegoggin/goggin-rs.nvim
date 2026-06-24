@@ -59,7 +59,7 @@ local registered = {}
 ---
 ---@param module_name string Lua module name.
 ---@param action_name string Function name exported by the module.
----@return fun()
+---@return fun() callback Command callback that dispatches to the workflow action.
 ---
 local function command_callback(module_name, action_name)
     return function()

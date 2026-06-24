@@ -27,7 +27,7 @@ local TELESCOPE_MODULES = {
 
 --- Runs a callback with stubbed Telescope modules.
 ---
----@param fn fun(captured: table)
+---@param fn fun(captured:table) Callback receiving captured Telescope state.
 ---
 local function with_telescope_stub(fn)
     local saved_loaded = {}
@@ -110,7 +110,7 @@ end
 
 --- Runs a callback with Telescope module loading forced to fail.
 ---
----@param fn fun()
+---@param fn fun() Callback run while Telescope modules fail to load.
 ---
 local function with_missing_telescope(fn)
     local saved_loaded = {}
@@ -139,7 +139,7 @@ end
 
 --- Runs a callback while capturing notifications.
 ---
----@param fn fun(notifications: table[])
+---@param fn fun(notifications:table[]) Callback receiving captured notifications.
 ---
 local function with_notifications(fn)
     local original_notify = vim.notify
@@ -199,6 +199,11 @@ local function render_preview(previewer, color)
 end
 
 --- Verifies picker entry formatting, preview rendering, and copy behavior.
+---
+--- # Example Under Test
+---
+--- A default project contains `_colors.scss` entries for resolved colors and an
+--- unresolved CSS variable, while Telescope and notifications are stubbed.
 ---
 --- # Assertions
 ---
@@ -307,6 +312,11 @@ test("scss color picker renders entries previews and copy actions", function()
 end)
 
 --- Verifies warning paths before opening Telescope.
+---
+--- # Example Under Test
+---
+--- Picker setup is attempted with missing Telescope modules, no `_colors.scss`
+--- files, and a color file containing no usable color variables.
 ---
 --- # Assertions
 ---

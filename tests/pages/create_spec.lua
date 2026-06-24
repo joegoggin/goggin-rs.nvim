@@ -333,6 +333,17 @@ end)
 --- Verifies page generation rejects names and routes that would create invalid
 --- Rust identifiers.
 ---
+--- # Example Under Test
+---
+--- Page creation is attempted with a numeric page name and with a route whose
+--- first segment would become a numeric Rust module.
+---
+--- # Assertions
+---
+--- - Numeric page names abort with an invalid page-name warning.
+--- - Numeric route segments abort with an invalid module warning.
+--- - Invalid route input does not create a numeric page directory.
+---
 test("page workflow rejects numeric-leading page names and route modules", function()
     with_stubbed_format(function()
         local root = path.join(temp_root, "page-create-invalid-identifiers")

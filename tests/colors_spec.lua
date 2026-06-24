@@ -34,6 +34,11 @@ end
 
 --- Verifies path resolution for direct and nested web-root layouts.
 ---
+--- # Example Under Test
+---
+--- One fixture uses a direct web root and another uses a repository root with a
+--- nested `web` directory.
+---
 --- # Assertions
 ---
 --- - Direct web roots resolve to the current project root.
@@ -57,6 +62,11 @@ test("scss color path resolution supports direct and nested web roots", function
 end)
 
 --- Verifies `_colors.scss` discovery and CSS variable resolution.
+---
+--- # Example Under Test
+---
+--- Color files are created in the web root, styles tree, asset CSS tree, and
+--- source tree, with one file defining palette values and `:root` selection.
 ---
 --- # Assertions
 ---
@@ -139,6 +149,11 @@ test("scss color collection resolves palette CSS variables with the default pale
 end)
 
 --- Verifies supported color syntax normalization.
+---
+--- # Example Under Test
+---
+--- Hex, rgb, rgba, hsl, hsla, unresolved CSS-variable, invalid hex, and
+--- non-color values are normalized directly.
 ---
 --- # Assertions
 ---

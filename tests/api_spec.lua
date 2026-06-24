@@ -44,7 +44,7 @@ end
 
 --- Runs a callback with a stubbed Telescope extension registrar.
 ---
----@param fn fun(extension: table)
+---@param fn fun(extension:table) Callback receiving the loaded extension module.
 ---
 local function with_telescope_extension_stub(fn)
     local saved_telescope = package.loaded.telescope
@@ -80,7 +80,7 @@ end
 
 --- Runs a callback while forcing the top-level Telescope module to fail.
 ---
----@param fn fun()
+---@param fn fun() Callback run while Telescope fails to load.
 ---
 local function with_missing_telescope(fn)
     local saved_telescope = package.loaded.telescope
@@ -107,6 +107,19 @@ local function with_missing_telescope(fn)
     end
 end
 
+--- Verifies legacy top-level require paths re-export refactored modules.
+---
+--- # Example Under Test
+---
+--- Legacy `goggin-rs.*` require paths and the new package modules are loaded
+--- in the same headless Neovim process.
+---
+--- # Assertions
+---
+--- - Legacy component, page, and infrastructure aliases return the refactored modules.
+--- - The aggregate infrastructure package exposes focused helper modules.
+--- - The SCSS package exposes the color picker workflow.
+---
 test("legacy top-level require paths re-export refactored modules", function()
     assert_equals(require("goggin-rs.component"), require("goggin-rs.components"), "component alias should load")
     assert_equals(require("goggin-rs.page"), require("goggin-rs.pages"), "page alias should load")
@@ -120,6 +133,19 @@ test("legacy top-level require paths re-export refactored modules", function()
     assert_equals(type(require("goggin-rs.scss").pick_colors), "function", "scss package should expose color picker")
 end)
 
+--- Verifies setup registers and disables workflow commands idempotently.
+---
+--- # Example Under Test
+---
+--- Plugin setup is called with commands disabled, then with a path override,
+--- then repeatedly with defaults and commands disabled again.
+---
+--- # Assertions
+---
+--- - Disabled setup removes all public workflow commands.
+--- - Default setup registers each command and preserves merged path config.
+--- - Repeated setup keeps commands registered without duplication.
+---
 test("setup registers workflow commands idempotently and supports disabling them", function()
     plugin.setup({ commands = { enabled = false } })
 
@@ -160,6 +186,18 @@ test("setup registers workflow commands idempotently and supports disabling them
     plugin.setup({})
 end)
 
+--- Verifies workflow commands dispatch to extracted module entrypoints.
+---
+--- # Example Under Test
+---
+--- Public `:GogginRs*` commands are executed after their target module actions
+--- are replaced with recording callbacks.
+---
+--- # Assertions
+---
+--- - Every command invokes the expected component, page, style, or SCSS action.
+--- - Command dispatch preserves the command order exercised by the test.
+---
 test("workflow commands dispatch to extracted module entrypoints", function()
     local modules = {
         ["goggin-rs.components"] = require("goggin-rs.components"),
@@ -243,6 +281,18 @@ test("workflow commands dispatch to extracted module entrypoints", function()
     }, "commands should invoke their workflow callbacks")
 end)
 
+--- Verifies the Telescope extension exports workflow picker names.
+---
+--- # Example Under Test
+---
+--- The Telescope extension is loaded with a stubbed extension registrar.
+---
+--- # Assertions
+---
+--- - The extension registers an exports table.
+--- - Every public picker and generator export is present.
+--- - Each exported workflow value is callable.
+---
 test("telescope extension exports workflow picker names", function()
     with_telescope_extension_stub(function(extension)
         assert_equals(type(extension.exports), "table", "extension should register exports")
@@ -253,6 +303,18 @@ test("telescope extension exports workflow picker names", function()
     end)
 end)
 
+--- Verifies the Telescope extension dispatches lazily to workflow entrypoints.
+---
+--- # Example Under Test
+---
+--- Extension exports are invoked after their target module actions are replaced
+--- with recording callbacks.
+---
+--- # Assertions
+---
+--- - Every Telescope export invokes the expected workflow action.
+--- - Export dispatch preserves the picker order exercised by the test.
+---
 test("telescope extension dispatches lazily to workflow entrypoints", function()
     local modules = {
         ["goggin-rs.components"] = require("goggin-rs.components"),
@@ -321,6 +383,18 @@ test("telescope extension dispatches lazily to workflow entrypoints", function()
     end)
 end)
 
+--- Verifies the Telescope extension reports actionable missing dependency errors.
+---
+--- # Example Under Test
+---
+--- The extension module is required while the top-level Telescope module is
+--- stubbed to fail loading.
+---
+--- # Assertions
+---
+--- - Requiring the extension fails when Telescope is unavailable.
+--- - The error message names `nvim-telescope/telescope.nvim`.
+---
 test("telescope extension reports actionable missing dependency errors", function()
     with_missing_telescope(function()
         local ok, err = pcall(require, telescope_extension_module)

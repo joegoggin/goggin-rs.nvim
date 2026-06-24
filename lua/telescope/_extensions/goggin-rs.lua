@@ -13,7 +13,7 @@ end
 ---
 ---@param module_name string Lua module name.
 ---@param action_name string Function name exported by the module.
----@return fun(...)
+---@return fun(...):any callback Lazy callback that forwards arguments to the workflow action.
 ---
 local function workflow_export(module_name, action_name)
     return function(...)

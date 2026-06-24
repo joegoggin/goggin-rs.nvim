@@ -285,6 +285,17 @@ end)
 --- Verifies page-local component generation rejects suffixes that would create
 --- invalid Rust module names.
 ---
+--- # Example Under Test
+---
+--- A module-layout `SettingsPage` receives a page-local component creation
+--- request with the input name `123 Panel`.
+---
+--- # Assertions
+---
+--- - Numeric component suffixes abort creation.
+--- - The warning explains that the component suffix cannot start with a number.
+--- - No invalid page-local component Rust file is written.
+---
 test("page workflow rejects numeric-leading page component suffixes", function()
     with_stubbed_format(function()
         local root = path.join(temp_root, "page-create-invalid-local-component")
@@ -319,6 +330,17 @@ end)
 
 --- Verifies page-local component generation rejects subdirectories that would
 --- create invalid Rust module names.
+---
+--- # Example Under Test
+---
+--- A module-layout `SettingsPage` receives a page-local component creation
+--- request under the relative directory `2024/Reports`.
+---
+--- # Assertions
+---
+--- - Numeric page component subdirectories abort creation.
+--- - The warning explains that the subdirectory cannot start with a number.
+--- - No invalid page-local component directory is written.
 ---
 test("page workflow rejects numeric-leading page component subdirectories", function()
     with_stubbed_format(function()
