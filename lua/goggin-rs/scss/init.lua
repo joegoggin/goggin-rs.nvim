@@ -7,6 +7,7 @@ local forwards = require("goggin-rs.scss.forwards")
 local colors = require("goggin-rs.scss.colors")
 local partials = require("goggin-rs.scss.partials")
 local prune = require("goggin-rs.scss.prune")
+local ui = require("goggin-rs.scss.ui")
 
 return {
     analyze_color_value = colors.analyze_color_value,
@@ -19,6 +20,7 @@ return {
     normalize_color_value = colors.normalize_color_value,
     parse_default_palette = colors.parse_default_palette,
     parse_palette_values = colors.parse_palette_values,
+    pick_colors = ui.pick,
     replace_forward = forwards.replace_forward,
     remove_forward = forwards.remove_forward,
     resolve_color_paths = colors.resolve_color_paths,

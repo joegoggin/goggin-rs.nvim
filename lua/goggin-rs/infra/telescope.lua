@@ -14,9 +14,10 @@ function M.load()
     local ok_action_state, action_state = pcall(require, "telescope.actions.state")
     local ok_finders, finders = pcall(require, "telescope.finders")
     local ok_pickers, pickers = pcall(require, "telescope.pickers")
+    local ok_previewers, previewers = pcall(require, "telescope.previewers")
     local ok_config, telescope_config = pcall(require, "telescope.config")
 
-    if not (ok_actions and ok_action_state and ok_finders and ok_pickers and ok_config) then
+    if not (ok_actions and ok_action_state and ok_finders and ok_pickers and ok_previewers and ok_config) then
         return nil
     end
 
@@ -25,6 +26,7 @@ function M.load()
         action_state = action_state,
         finders = finders,
         pickers = pickers,
+        previewers = previewers,
         config = telescope_config,
     }
 end
