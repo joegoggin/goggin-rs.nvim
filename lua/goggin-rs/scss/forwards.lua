@@ -1,12 +1,11 @@
---- SCSS index mutation helpers.
+--- SCSS `@forward` index mutation helpers.
 ---
---- Maintains generated `index.scss` files by adding, replacing, removing, and
---- pruning `@forward` declarations for components and pages.
+--- Adds, replaces, removes, and chains SCSS `@forward` declarations for
+--- generated component and page style indexes.
 
-local fs = require("goggin-rs.fs")
-local path = require("goggin-rs.path")
-local prune = require("goggin-rs.prune")
-local touch = require("goggin-rs.touch")
+local fs = require("goggin-rs.infra.fs")
+local path = require("goggin-rs.infra.path")
+local touch = require("goggin-rs.infra.touch")
 
 local M = {}
 
@@ -163,22 +162,6 @@ function M.ensure_forward_chain(style_root, segments, target, tracker)
     end
 
     M.ensure_forward(path.join(current, "index.scss"), target, tracker)
-end
-
---- Prunes empty SCSS directories and removes parent forwards.
----
----@param start_dir string Directory where pruning starts.
----@param root_dir string Boundary directory that is never deleted.
----@param tracker table|nil Touched-file tracker for deleted paths and updated parents.
----
-function M.prune_empty_dirs(start_dir, root_dir, tracker)
-    prune.empty_dirs(start_dir, root_dir, {
-        marker_name = "index.scss",
-        tracker = tracker,
-        on_pruned_parent = function(parent, child_name, active_tracker)
-            M.remove_forward(path.join(parent, "index.scss"), child_name, active_tracker)
-        end,
-    })
 end
 
 return M
