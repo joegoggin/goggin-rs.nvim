@@ -50,11 +50,14 @@ Project resolution checks both supported layouts:
   and Telescope-loading helpers.
 - `goggin-rs.rust` updates Rust module declarations, exports, Leptos routes,
   and empty module directories.
-- `goggin-rs.scss` updates SCSS `@forward` indexes and style directory chains.
+- `goggin-rs.scss` updates SCSS `@forward` indexes, style directory chains,
+  and color variable discovery/parsing.
 - `goggin-rs.components` collects component/style pairs and generates new
   component Rust/SCSS files.
 - `goggin-rs.pages` collects page/style pairs and generates new flat or
   module-layout page Rust/SCSS files with app route insertion.
+- `goggin-rs.styles` collects missing or existing style targets and provides
+  add/delete workflows for component, page, and page-local component styles.
 
 Most package directories also contain focused implementation modules. Prefer
 the package `init.lua` modules above unless a workflow needs a narrower helper.
