@@ -212,6 +212,38 @@ local function append_planned_item(items, include_existing, item, style_plan)
     table.insert(items, item)
 end
 
+--- Collects Rust component files under a root with derived metadata.
+---
+---@param root string Root directory to scan.
+---@return table[] sources Component source metadata.
+---
+local function collect_component_sources(root)
+    local sources = {}
+
+    for _, rust_path in ipairs(vim.fn.glob(path.join(root, "**/*.rs"), true, true)) do
+        if path.basename(rust_path) ~= "mod.rs" then
+            local component_name = rust.component_name_from_file(rust_path)
+            if component_name then
+                local rust_relative = path.relative(root, rust_path)
+                local relative_dir = vim.fn.fnamemodify(rust_relative, ":h")
+                if relative_dir == "." then
+                    relative_dir = ""
+                end
+
+                table.insert(sources, {
+                    component_name = component_name,
+                    rust_path = rust_path,
+                    rust_relative = rust_relative,
+                    relative_dir = relative_dir,
+                    stem = vim.fn.fnamemodify(rust_relative, ":t:r"),
+                })
+            end
+        end
+    end
+
+    return sources
+end
+
 --- Collects regular component style items.
 ---
 ---@param paths table Resolved project paths.
@@ -223,38 +255,24 @@ local function collect_regular_component_items(paths, include_existing)
         return {}
     end
 
-    local rust_files = vim.fn.glob(path.join(paths.components_dir, "**/*.rs"), true, true)
     local root_forwards = collect_forward_targets(path.join(paths.styles_components_dir, "index.scss"))
     local items = {}
 
-    for _, rust_path in ipairs(rust_files) do
-        if path.basename(rust_path) ~= "mod.rs" then
-            local component_name = rust.component_name_from_file(rust_path)
-            if component_name then
-                local rust_relative = path.relative(paths.components_dir, rust_path)
-                local relative_dir = vim.fn.fnamemodify(rust_relative, ":h")
-                if relative_dir == "." then
-                    relative_dir = ""
-                end
+    for _, source in ipairs(collect_component_sources(paths.components_dir)) do
+        local rust_segments = naming.split_path_segments(source.relative_dir)
+        local style_segments = map_component_style_segments(paths.styles_components_dir, rust_segments, root_forwards)
+        local style_base_dir = join_segments(paths.styles_components_dir, style_segments)
+        local style_plan = resolve_partial_style_plan(style_base_dir, source.stem)
 
-                local rust_segments = naming.split_path_segments(relative_dir)
-                local style_segments =
-                    map_component_style_segments(paths.styles_components_dir, rust_segments, root_forwards)
-                local style_base_dir = join_segments(paths.styles_components_dir, style_segments)
-                local stem = vim.fn.fnamemodify(rust_relative, ":t:r")
-                local style_plan = resolve_partial_style_plan(style_base_dir, stem)
-
-                append_planned_item(items, include_existing, {
-                    item_type = "component",
-                    kind_label = "Component",
-                    component_name = component_name,
-                    rust_path = rust_path,
-                    rust_relative = rust_relative,
-                    style_root = paths.styles_components_dir,
-                    style_segments = style_segments,
-                }, style_plan)
-            end
-        end
+        append_planned_item(items, include_existing, {
+            item_type = "component",
+            kind_label = "Component",
+            component_name = source.component_name,
+            rust_path = source.rust_path,
+            rust_relative = source.rust_relative,
+            style_root = paths.styles_components_dir,
+            style_segments = style_segments,
+        }, style_plan)
     end
 
     return items
@@ -311,38 +329,25 @@ local function collect_page_component_items(page, paths, include_existing, items
         return
     end
 
-    local component_files = vim.fn.glob(path.join(components_dir, "**/*.rs"), true, true)
-    for _, rust_path in ipairs(component_files) do
-        if path.basename(rust_path) ~= "mod.rs" then
-            local component_name = rust.component_name_from_file(rust_path)
-            if component_name then
-                local relative_from_components = path.relative(components_dir, rust_path)
-                local component_subdir = vim.fn.fnamemodify(relative_from_components, ":h")
-                if component_subdir == "." then
-                    component_subdir = ""
-                end
-
-                local style_segments = naming.split_path_segments(page.module_relative_dir)
-                table.insert(style_segments, "components")
-                for _, segment in ipairs(naming.split_path_segments(component_subdir)) do
-                    table.insert(style_segments, segment)
-                end
-
-                local style_base_dir = join_segments(paths.page_styles_dir, style_segments)
-                local stem = vim.fn.fnamemodify(relative_from_components, ":t:r")
-                local style_plan = resolve_partial_style_plan(style_base_dir, stem)
-
-                append_planned_item(items, include_existing, {
-                    item_type = "page_component",
-                    kind_label = "Page Component",
-                    component_name = component_name,
-                    rust_path = rust_path,
-                    rust_relative = path.relative(paths.pages_dir, rust_path),
-                    style_root = paths.page_styles_dir,
-                    style_segments = style_segments,
-                }, style_plan)
-            end
+    for _, source in ipairs(collect_component_sources(components_dir)) do
+        local style_segments = naming.split_path_segments(page.module_relative_dir)
+        table.insert(style_segments, "components")
+        for _, segment in ipairs(naming.split_path_segments(source.relative_dir)) do
+            table.insert(style_segments, segment)
         end
+
+        local style_base_dir = join_segments(paths.page_styles_dir, style_segments)
+        local style_plan = resolve_partial_style_plan(style_base_dir, source.stem)
+
+        append_planned_item(items, include_existing, {
+            item_type = "page_component",
+            kind_label = "Page Component",
+            component_name = source.component_name,
+            rust_path = source.rust_path,
+            rust_relative = path.relative(paths.pages_dir, source.rust_path),
+            style_root = paths.page_styles_dir,
+            style_segments = style_segments,
+        }, style_plan)
     end
 end
 

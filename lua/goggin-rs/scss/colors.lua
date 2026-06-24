@@ -337,6 +337,21 @@ local function resolve_css_color_var(value, palettes, default_palette)
     return rgb_to_hex(r, g, b), format_rgb(r, g, b)
 end
 
+--- Builds a normalized color result.
+---
+---@param cleaned string Cleaned source value.
+---@param hex string Preview hex color.
+---@param resolved string Resolved display value.
+---@return table color Normalized color result.
+---
+local function color_result(cleaned, hex, resolved)
+    return {
+        raw_value = cleaned,
+        resolved_value = resolved,
+        hex = hex,
+    }
+end
+
 --- Normalizes a single SCSS color value.
 ---
 ---@param value string SCSS color value.
@@ -351,38 +366,22 @@ function M.normalize_color_value(value, opts)
 
     local hex, resolved = resolve_css_color_var(cleaned, palettes, default_palette)
     if hex then
-        return {
-            raw_value = cleaned,
-            resolved_value = resolved,
-            hex = hex,
-        }
+        return color_result(cleaned, hex, resolved)
     end
 
     hex, resolved = parse_hex_color(cleaned)
     if hex then
-        return {
-            raw_value = cleaned,
-            resolved_value = resolved,
-            hex = hex,
-        }
+        return color_result(cleaned, hex, resolved)
     end
 
     hex, resolved = parse_rgb_color(cleaned)
     if hex then
-        return {
-            raw_value = cleaned,
-            resolved_value = resolved,
-            hex = hex,
-        }
+        return color_result(cleaned, hex, resolved)
     end
 
     hex, resolved = parse_hsl_color(cleaned)
     if hex then
-        return {
-            raw_value = cleaned,
-            resolved_value = resolved,
-            hex = hex,
-        }
+        return color_result(cleaned, hex, resolved)
     end
 
     if cleaned:match("var%(%s*%-%-color%-") or cleaned:match("^%s*rgba?%s*%(") or cleaned:match("^%s*hsla?%s*%(") then

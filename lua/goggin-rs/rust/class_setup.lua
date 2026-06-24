@@ -8,6 +8,24 @@ local naming = require("goggin-rs.naming")
 
 local M = {}
 
+local CLASS_NAME_UTIL_CALLS = {
+    {
+        contains = "ClassNameUtil::new(",
+        extract_pattern = 'ClassNameUtil::new%("([^"]+)"',
+        class_capture = 1,
+    },
+    {
+        contains = "ClassNameUtil::new_with_parent(",
+        extract_pattern = 'ClassNameUtil::new_with_parent%("([^"]+)",%s*"([^"]+)"',
+        class_capture = 2,
+    },
+    {
+        contains = "ClassNameUtil::new_layout_class_name(",
+        extract_pattern = 'ClassNameUtil::new_layout_class_name%("([^"]+)"',
+        class_capture = 1,
+    },
+}
+
 --- Extracts an existing `ClassNameUtil` class from a Rust source file.
 ---
 ---@param file_path string Rust file path.
@@ -15,19 +33,12 @@ local M = {}
 ---
 function M.extract_existing_class_name(file_path)
     for _, line in ipairs(fs.read_lines(file_path)) do
-        local direct = line:match('ClassNameUtil::new%("([^"]+)"')
-        if direct then
-            return direct
-        end
-
-        local _, child = line:match('ClassNameUtil::new_with_parent%("([^"]+)",%s*"([^"]+)"')
-        if child then
-            return child
-        end
-
-        local layout = line:match('ClassNameUtil::new_layout_class_name%("([^"]+)"')
-        if layout then
-            return layout
+        for _, call in ipairs(CLASS_NAME_UTIL_CALLS) do
+            local captures = { line:match(call.extract_pattern) }
+            local class_name = captures[call.class_capture]
+            if class_name then
+                return class_name
+            end
         end
     end
 
@@ -41,12 +52,10 @@ end
 ---
 function M.has_class_setup(lines)
     for _, line in ipairs(lines) do
-        if
-            line:find("ClassNameUtil::new(", 1, true)
-            or line:find("ClassNameUtil::new_with_parent(", 1, true)
-            or line:find("ClassNameUtil::new_layout_class_name(", 1, true)
-        then
-            return true
+        for _, call in ipairs(CLASS_NAME_UTIL_CALLS) do
+            if line:find(call.contains, 1, true) then
+                return true
+            end
         end
     end
 

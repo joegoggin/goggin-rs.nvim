@@ -106,9 +106,11 @@ local function confirm_delete(item)
     end)
 end
 
---- Opens a Telescope picker for pages/components missing styles.
+--- Opens the add/delete style picker with mode-specific options.
 ---
-function M.pick()
+---@param opts table Picker options.
+---
+local function pick_style_items(opts)
     local paths =
         project.resolve_or_notify({ "components_dir", "styles_components_dir", "pages_dir", "page_styles_dir" })
     if not paths or not ensure_required_directories(paths) then
@@ -120,38 +122,37 @@ function M.pick()
         return
     end
 
-    local items = collect.collect({ paths = paths, include_existing = false })
+    local items = collect.collect({ paths = paths, include_existing = opts.include_existing })
     if #items == 0 then
-        notify_warn("No pages or components are missing styles.")
+        notify_warn(opts.empty_message)
         return
     end
 
-    pick_items("Add Missing Style", items, telescope, function(item)
-        create.create_missing_style(item, { open = true })
-    end)
+    pick_items(opts.prompt_title, items, telescope, opts.on_select)
+end
+
+--- Opens a Telescope picker for pages/components missing styles.
+---
+function M.pick()
+    pick_style_items({
+        prompt_title = "Add Missing Style",
+        include_existing = false,
+        empty_message = "No pages or components are missing styles.",
+        on_select = function(item)
+            create.create_missing_style(item, { open = true })
+        end,
+    })
 end
 
 --- Opens a Telescope picker for pages/components with existing styles.
 ---
 function M.pick_delete()
-    local paths =
-        project.resolve_or_notify({ "components_dir", "styles_components_dir", "pages_dir", "page_styles_dir" })
-    if not paths or not ensure_required_directories(paths) then
-        return
-    end
-
-    local telescope = load_telescope_for_styles()
-    if not telescope then
-        return
-    end
-
-    local items = collect.collect({ paths = paths, include_existing = true })
-    if #items == 0 then
-        notify_warn("No pages or components with styles were found.")
-        return
-    end
-
-    pick_items("Delete Style", items, telescope, confirm_delete)
+    pick_style_items({
+        prompt_title = "Delete Style",
+        include_existing = true,
+        empty_message = "No pages or components with styles were found.",
+        on_select = confirm_delete,
+    })
 end
 
 return M
