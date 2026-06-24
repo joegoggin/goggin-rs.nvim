@@ -11,6 +11,8 @@ local test = h.test
 
 local plugin = h.plugin
 
+local telescope_extension_module = "telescope._extensions.goggin-rs"
+
 local command_names = {
     "GogginRsPickComponent",
     "GogginRsGenerateComponent",
@@ -21,6 +23,16 @@ local command_names = {
     "GogginRsPickColors",
 }
 
+local telescope_picker_names = {
+    "pick_component",
+    "generate_component",
+    "pick_page",
+    "generate_page",
+    "add_style",
+    "delete_style",
+    "pick_colors",
+}
+
 --- Checks whether a user command is currently registered.
 ---
 ---@param name string User command name.
@@ -28,6 +40,71 @@ local command_names = {
 ---
 local function command_exists(name)
     return vim.fn.exists(":" .. name) == 2
+end
+
+--- Runs a callback with a stubbed Telescope extension registrar.
+---
+---@param fn fun(extension: table)
+---
+local function with_telescope_extension_stub(fn)
+    local saved_telescope = package.loaded.telescope
+    local saved_telescope_preload = package.preload.telescope
+    local saved_extension = package.loaded[telescope_extension_module]
+    local saved_extension_preload = package.preload[telescope_extension_module]
+    local telescope = {}
+
+    function telescope.register_extension(extension)
+        return extension
+    end
+
+    package.loaded.telescope = telescope
+    package.preload.telescope = function()
+        return telescope
+    end
+    package.loaded[telescope_extension_module] = nil
+    package.preload[telescope_extension_module] = nil
+
+    local ok, err = xpcall(function()
+        fn(require(telescope_extension_module))
+    end, debug.traceback)
+
+    package.loaded.telescope = saved_telescope
+    package.preload.telescope = saved_telescope_preload
+    package.loaded[telescope_extension_module] = saved_extension
+    package.preload[telescope_extension_module] = saved_extension_preload
+
+    if not ok then
+        error(err, 2)
+    end
+end
+
+--- Runs a callback while forcing the top-level Telescope module to fail.
+---
+---@param fn fun()
+---
+local function with_missing_telescope(fn)
+    local saved_telescope = package.loaded.telescope
+    local saved_telescope_preload = package.preload.telescope
+    local saved_extension = package.loaded[telescope_extension_module]
+    local saved_extension_preload = package.preload[telescope_extension_module]
+
+    package.loaded.telescope = nil
+    package.preload.telescope = function()
+        error("missing telescope")
+    end
+    package.loaded[telescope_extension_module] = nil
+    package.preload[telescope_extension_module] = nil
+
+    local ok, err = xpcall(fn, debug.traceback)
+
+    package.loaded.telescope = saved_telescope
+    package.preload.telescope = saved_telescope_preload
+    package.loaded[telescope_extension_module] = saved_extension
+    package.preload[telescope_extension_module] = saved_extension_preload
+
+    if not ok then
+        error(err, 2)
+    end
 end
 
 test("legacy top-level require paths re-export refactored modules", function()
@@ -164,4 +241,95 @@ test("workflow commands dispatch to extracted module entrypoints", function()
         "styles.pick_delete",
         "scss.pick_colors",
     }, "commands should invoke their workflow callbacks")
+end)
+
+test("telescope extension exports workflow picker names", function()
+    with_telescope_extension_stub(function(extension)
+        assert_equals(type(extension.exports), "table", "extension should register exports")
+
+        for _, picker_name in ipairs(telescope_picker_names) do
+            assert_equals(type(extension.exports[picker_name]), "function", picker_name .. " should be exported")
+        end
+    end)
+end)
+
+test("telescope extension dispatches lazily to workflow entrypoints", function()
+    local modules = {
+        ["goggin-rs.components"] = require("goggin-rs.components"),
+        ["goggin-rs.pages"] = require("goggin-rs.pages"),
+        ["goggin-rs.styles"] = require("goggin-rs.styles"),
+        ["goggin-rs.scss"] = require("goggin-rs.scss"),
+    }
+
+    local cases = {
+        { picker = "pick_component", module = "goggin-rs.components", action = "pick", marker = "components.pick" },
+        {
+            picker = "generate_component",
+            module = "goggin-rs.components",
+            action = "generate",
+            marker = "components.generate",
+        },
+        { picker = "pick_page", module = "goggin-rs.pages", action = "pick", marker = "pages.pick" },
+        { picker = "generate_page", module = "goggin-rs.pages", action = "generate", marker = "pages.generate" },
+        { picker = "add_style", module = "goggin-rs.styles", action = "pick", marker = "styles.pick" },
+        {
+            picker = "delete_style",
+            module = "goggin-rs.styles",
+            action = "pick_delete",
+            marker = "styles.pick_delete",
+        },
+        { picker = "pick_colors", module = "goggin-rs.scss", action = "pick_colors", marker = "scss.pick_colors" },
+    }
+
+    with_telescope_extension_stub(function(extension)
+        local originals = {}
+        local called = {}
+
+        for _, case in ipairs(cases) do
+            local target = modules[case.module]
+            local marker = case.marker
+
+            originals[marker] = target[case.action]
+            rawset(target, case.action, function()
+                table.insert(called, marker)
+            end)
+        end
+
+        local ok, err = xpcall(function()
+            for _, case in ipairs(cases) do
+                extension.exports[case.picker]()
+            end
+        end, debug.traceback)
+
+        for _, case in ipairs(cases) do
+            rawset(modules[case.module], case.action, originals[case.marker])
+        end
+
+        if not ok then
+            error(err, 2)
+        end
+
+        assert_list_equals(called, {
+            "components.pick",
+            "components.generate",
+            "pages.pick",
+            "pages.generate",
+            "styles.pick",
+            "styles.pick_delete",
+            "scss.pick_colors",
+        }, "extension exports should invoke workflow callbacks")
+    end)
+end)
+
+test("telescope extension reports actionable missing dependency errors", function()
+    with_missing_telescope(function()
+        local ok, err = pcall(require, telescope_extension_module)
+
+        assert_equals(ok, false, "extension should fail without Telescope")
+        assert_equals(
+            tostring(err):find("requires nvim-telescope/telescope.nvim", 1, true) ~= nil,
+            true,
+            "missing Telescope error should name the dependency"
+        )
+    end)
 end)

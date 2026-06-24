@@ -11,11 +11,12 @@ https://github.com/joegoggin/goggin-nvim-v2
 `goggin-rs.nvim` provides Lua helpers for Rust/Leptos project automation. The
 current modules focus on project layout discovery, generated file naming,
 Rust `mod.rs` and route mutation, SCSS `@forward` maintenance, empty directory
-pruning, and touched-file formatting.
+pruning, touched-file formatting, Neovim commands, and Telescope picker
+exports.
 
-The plugin currently exposes setup/configuration helpers from `require("goggin-rs")`.
+The plugin exposes setup/configuration helpers from `require("goggin-rs")`.
 The lower-level modules are also documented with LuaLS annotations so workflows
-can compose them directly while the command surface is still being built.
+can compose them directly.
 
 ## Configuration
 
@@ -38,6 +39,38 @@ Project resolution checks both supported layouts:
 
 - `./web/...` from a repository root.
 - `./...` from a web root.
+
+## Telescope Extension
+
+Telescope picker workflows require
+[`nvim-telescope/telescope.nvim`](https://github.com/nvim-telescope/telescope.nvim).
+Load the extension after Telescope is available:
+
+```lua
+require("telescope").load_extension("goggin-rs")
+```
+
+Exported picker functions map to the same workflow entrypoints as the
+`:GogginRs*` commands:
+
+```lua
+local goggin_rs = require("telescope").extensions["goggin-rs"]
+
+goggin_rs.pick_component()
+goggin_rs.generate_component()
+goggin_rs.pick_page()
+goggin_rs.generate_page()
+goggin_rs.add_style()
+goggin_rs.delete_style()
+goggin_rs.pick_colors()
+```
+
+The same exports are also available through Telescope commands, for example:
+
+```vim
+:Telescope goggin-rs pick_component
+:Telescope goggin-rs pick_colors
+```
 
 ## Modules
 
